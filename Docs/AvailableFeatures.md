@@ -130,7 +130,7 @@
 |---|------|------|------|---------|
 | 37 | **ChatContext 状态管理** | ChatContext.tsx | 1104 | 大幅简化 |
 | 38 | **手写 tool loop** | ChatContext.tsx:782-857 - streamViaLlmAdapter | ~75 | AI SDK streamText |
-| 39 | **MAX_TOOL_ROUNDS** | ChatContext.tsx:11 - 5 轮限制 | 1 | stopWhen: stepCountIs(5) |
+| 39 | **MAX_TOOL_ROUNDS** | ChatContext.tsx:11 - 5 轮限制 | 1 | stopWhen: isStepCount(5) |
 | 40 | **双 Port LLM 通信** | ChatContext.tsx:877-959 - chatViaBackground | ~82 | 单 Port 流式 |
 | 41 | **tool 执行 Port** | ChatContext.tsx:961-1027 - resolveToolCall | ~66 | SW 内部执行 |
 | 42 | **流式 delta 渲染** | ChatContext.tsx:455-458 | ~4 | 不变 |
