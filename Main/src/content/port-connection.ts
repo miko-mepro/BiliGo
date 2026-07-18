@@ -18,7 +18,19 @@ export interface ConnectHandlers {
 }
 
 export function connectChatPort(handlers: ConnectHandlers): PortConnection {
-  const port = chrome.runtime.connect({ name: PORT_NAME })
+  let port: chrome.runtime.Port
+  try {
+    port = chrome.runtime.connect({ name: PORT_NAME })
+  } catch {
+    handlers.onDisconnect()
+    return {
+      postMessage(): void {},
+      onMessage(): () => void {
+        return () => {}
+      },
+      disconnect(): void {},
+    }
+  }
 
   const messageHandlers = new Set<(msg: SWMessage) => void>()
   messageHandlers.add(handlers.onMessage)

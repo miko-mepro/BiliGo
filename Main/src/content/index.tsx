@@ -1,8 +1,14 @@
 /// <reference types="@types/chrome" />
 
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { useChat } from './chat-context.tsx'
+import { ErrorBoundary } from './error-boundary.tsx'
+import { SettingsPanel } from './settings-panel.tsx'
+import {
+  readBiliAgentSettings,
+  type BiliAgentSettings,
+} from '../config/settings.js'
 
 const HOST_ID = 'bili-agent-host'
 
@@ -31,8 +37,13 @@ function App() {
       borderRadius: 8,
       boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
       zIndex: 2147483647,
+      pointerEvents: 'auto',
     }}>
-      <div style={{ padding: 8, borderBottom: '1px solid #eee', fontWeight: 600 }}>
+      <div style={{
+        padding: 8,
+        borderBottom: '1px solid #eee',
+        fontWeight: 600,
+      }}>
         BiliAgent
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
@@ -154,6 +165,7 @@ function ToggleButton({ visible, onClick }: { visible: boolean; onClick: () => v
         justifyContent: 'center',
         padding: 0,
         lineHeight: 1,
+        pointerEvents: 'auto',
       }}
     >
       {visible ? '×' : '聊'}
@@ -161,35 +173,149 @@ function ToggleButton({ visible, onClick }: { visible: boolean; onClick: () => v
   )
 }
 
-function Root() {
-  const [panelVisible, setPanelVisible] = useState(false)
-
+function SettingsButton({ onClick }: { onClick: () => void }) {
   return (
-    <>
-      <ToggleButton visible={panelVisible} onClick={() => setPanelVisible(v => !v)} />
-      {panelVisible && <App />}
-    </>
+    <button
+      type="button"
+      onClick={onClick}
+      title="配置 Provider"
+      style={{
+        position: 'fixed',
+        bottom: 20,
+        right: 76,
+        width: 36,
+        height: 36,
+        borderRadius: '50%',
+        background: '#fff',
+        color: '#666',
+        border: '1px solid #ddd',
+        fontSize: 16,
+        cursor: 'pointer',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+        zIndex: 2147483647,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        lineHeight: 1,
+        pointerEvents: 'auto',
+      }}
+    >
+      ⚙
+    </button>
   )
 }
+
+function Root() {
+  const [panelVisible, setPanelVisible] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+
+  return (
+    <ErrorBoundary>
+      <ToggleButton visible={panelVisible} onClick={() => setPanelVisible(v => !v)} />
+      <SettingsButton onClick={() => setShowSettings(true)} />
+      {panelVisible && <App />}
+      {showSettings && (
+        <SettingsOnlyView onClose={() => setShowSettings(false)} />
+      )}
+    </ErrorBoundary>
+  )
+}
+
+function SettingsOnlyView({ onClose }: { onClose: () => void }) {
+  const [settings, setSettings] = useState<BiliAgentSettings | null>(null)
+
+  useEffect(() => {
+    readBiliAgentSettings().then(setSettings).catch(() => setSettings(null))
+  }, [])
+
+  if (!settings) {
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 20,
+        right: 20,
+        padding: 12,
+        background: '#fff',
+        border: '1px solid #ccc',
+        borderRadius: 8,
+        fontSize: 12,
+        color: '#999',
+        zIndex: 2147483647,
+        pointerEvents: 'auto',
+      }}>
+        加载中...
+      </div>
+    )
+  }
+
+  return (
+    <SettingsPanel
+      settings={settings}
+      onClose={onClose}
+      onSaved={(s) => {
+        setSettings(s)
+        onClose()
+      }}
+    />
+  )
+}
+
+let mountedRoot: ReturnType<typeof createRoot> | null = null
+let mountedHost: HTMLDivElement | null = null
+let observer: MutationObserver | null = null
 
 function mountPanel() {
   if (document.getElementById(HOST_ID)) return
 
   const host = document.createElement('div')
   host.id = HOST_ID
-  host.style.cssText = 'position:fixed;width:0;height:0;z-index:2147483647'
+  host.style.cssText =
+    'position:fixed;top:0;left:0;width:100vw;height:100vh;' +
+    'pointer-events:none;z-index:2147483647;'
   document.documentElement.appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'open' })
 
-  const root = document.createElement('div')
-  shadow.appendChild(root)
+  const container = document.createElement('div')
+  container.style.cssText = 'position:relative;width:100%;height:100%;pointer-events:none;'
+  shadow.appendChild(container)
 
-  createRoot(root).render(<Root />)
+  mountedRoot = createRoot(container)
+  mountedRoot.render(<Root />)
+  mountedHost = host
+}
+
+function ensureMounted(): void {
+  if (mountedHost && document.documentElement.contains(mountedHost)) return
+  mountedHost = null
+  mountedRoot = null
+  mountPanel()
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountPanel)
+  document.addEventListener('DOMContentLoaded', () => {
+    mountPanel()
+    startObserver()
+  })
 } else {
   mountPanel()
+  startObserver()
+}
+
+function startObserver(): void {
+  if (observer) observer.disconnect()
+  observer = new MutationObserver(() => {
+    ensureMounted()
+  })
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: false,
+  })
+  if (document.body) {
+    observer.observe(document.body, {
+      childList: true,
+      subtree: false,
+    })
+  }
 }
