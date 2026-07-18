@@ -18,7 +18,20 @@ function App() {
   }
 
   return (
-    <div style={{ width: 380, height: 560, display: 'flex', flexDirection: 'column', border: '1px solid #ccc', background: '#fff' }}>
+    <div style={{
+      position: 'fixed',
+      top: 20,
+      right: 80,
+      width: 380,
+      height: 560,
+      display: 'flex',
+      flexDirection: 'column',
+      border: '1px solid #ccc',
+      background: '#fff',
+      borderRadius: 8,
+      boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+      zIndex: 2147483647,
+    }}>
       <div style={{ padding: 8, borderBottom: '1px solid #eee', fontWeight: 600 }}>
         BiliAgent
       </div>
@@ -116,12 +129,55 @@ function App() {
   )
 }
 
+function ToggleButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={visible ? '收起面板' : '展开 BiliAgent'}
+      style={{
+        position: 'fixed',
+        bottom: 20,
+        right: 20,
+        width: 48,
+        height: 48,
+        borderRadius: '50%',
+        background: '#FB7299',
+        color: '#fff',
+        border: 'none',
+        fontSize: 20,
+        cursor: 'pointer',
+        boxShadow: '0 2px 8px rgba(251,114,153,0.4)',
+        zIndex: 2147483647,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        lineHeight: 1,
+      }}
+    >
+      {visible ? '×' : '聊'}
+    </button>
+  )
+}
+
+function Root() {
+  const [panelVisible, setPanelVisible] = useState(false)
+
+  return (
+    <>
+      <ToggleButton visible={panelVisible} onClick={() => setPanelVisible(v => !v)} />
+      {panelVisible && <App />}
+    </>
+  )
+}
+
 function mountPanel() {
   if (document.getElementById(HOST_ID)) return
 
   const host = document.createElement('div')
   host.id = HOST_ID
-  host.style.cssText = 'position:fixed;width:0;height:0;z-index:10000'
+  host.style.cssText = 'position:fixed;width:0;height:0;z-index:2147483647'
   document.documentElement.appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'open' })
@@ -129,7 +185,7 @@ function mountPanel() {
   const root = document.createElement('div')
   shadow.appendChild(root)
 
-  createRoot(root).render(<App />)
+  createRoot(root).render(<Root />)
 }
 
 if (document.readyState === 'loading') {
