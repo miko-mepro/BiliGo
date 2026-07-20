@@ -3,11 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const aiMocks = vi.hoisted(() => ({
   streamText: vi.fn(),
   isStepCount: vi.fn(),
+  tool: vi.fn((opts) => ({ ...opts, __aiTool: true })),
 }))
 
 vi.mock('ai', () => ({
   streamText: aiMocks.streamText,
   isStepCount: aiMocks.isStepCount,
+  tool: aiMocks.tool,
 }))
 
 const settingsMocks = vi.hoisted(() => ({
@@ -26,6 +28,46 @@ const factoryMocks = vi.hoisted(() => ({
 vi.mock('../../src/config/provider-factory.js', () => ({
   createModel: factoryMocks.createModel,
   validateProviderConfig: factoryMocks.validateProviderConfig,
+}))
+
+// Mock 5 个工具模块 + working-memory + analyze-covers，避免触发实际工具实现
+// 及其依赖链（slang-dictionary.json / tag-categories.json / bilibili-client/* 等）。
+// 工厂返回占位 tool 对象即可，因 streamText 已被 mock，工具 execute 不会被调用。
+const toolMocks = vi.hoisted(() => ({
+  createSlangUnderstandTool: vi.fn(() => ({ __kind: 'slang_understand' })),
+  createQueryExpandTool: vi.fn(() => ({ __kind: 'query_expand' })),
+  createBilibiliSearchTool: vi.fn(() => ({ __kind: 'bilibili_search' })),
+  createVideoRerankTool: vi.fn(() => ({ __kind: 'video_rerank' })),
+  askClarification: vi.fn(),
+  WorkingMemoryStore: {
+    create: vi.fn(() => Promise.resolve({ traceId: 'test-trace' })),
+    get: vi.fn(() => Promise.resolve(undefined)),
+    update: vi.fn(() => Promise.resolve(undefined)),
+    release: vi.fn(() => Promise.resolve()),
+  },
+  analyzeCovers: vi.fn(),
+}))
+
+vi.mock('../../src/tools/slang-understand.js', () => ({
+  createSlangUnderstandTool: toolMocks.createSlangUnderstandTool,
+}))
+vi.mock('../../src/tools/query-expand.js', () => ({
+  createQueryExpandTool: toolMocks.createQueryExpandTool,
+}))
+vi.mock('../../src/tools/bilibili-search.js', () => ({
+  createBilibiliSearchTool: toolMocks.createBilibiliSearchTool,
+}))
+vi.mock('../../src/tools/video-rerank.js', () => ({
+  createVideoRerankTool: toolMocks.createVideoRerankTool,
+}))
+vi.mock('../../src/tools/ask-clarification.js', () => ({
+  askClarification: toolMocks.askClarification,
+}))
+vi.mock('../../src/tools/working-memory.js', () => ({
+  WorkingMemoryStore: toolMocks.WorkingMemoryStore,
+}))
+vi.mock('../../src/tools/analyze-covers.js', () => ({
+  analyzeCovers: toolMocks.analyzeCovers,
 }))
 
 import {
@@ -418,5 +460,290 @@ describe('protocol', () => {
     handlePing(port, session)
     expect(posted).toEqual([{ type: 'pong' }])
     expect(aiMocks.streamText).not.toHaveBeenCalled()
+  })
+})
+
+describe('tool auxiliary messages', () => {
+  it('pushes tool_start + insight(understanding) + tool_result for slang_understand', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const understanding = {
+      original: 'yyds',
+      normalized: '永远的神',
+      explanation: '永远的神',
+      matchedDict: true,
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_u1', 'slang_understand', { query: 'yyds' }),
+        toolResult('call_u1', 'slang_understand', understanding),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    // 顺序：tool_start -> insight(understanding) -> tool_result -> done
+    expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_u1',
+      toolName: 'slang_understand',
+      args: { query: 'yyds' },
+    })
+    expect(posted).toContainEqual({
+      type: 'insight',
+      kind: 'understanding',
+      data: understanding,
+    })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_u1',
+      toolName: 'slang_understand',
+      result: understanding,
+    })
+    // 顺序断言：insight 在 tool_result 之前
+    const insightIdx = posted.findIndex(
+      (m) => m.type === 'insight' && m.kind === 'understanding',
+    )
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_u1',
+    )
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
+    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('pushes tool_start + videos + tool_result for bilibili_search', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const videos = [
+      { bvid: 'BV1aa', title: 'video1' },
+      { bvid: 'BV2bb', title: 'video2' },
+    ]
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s1', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s1', 'bilibili_search', videos),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_s1',
+      toolName: 'bilibili_search',
+      args: { keyword: '鬼畜' },
+    })
+    expect(posted).toContainEqual({ type: 'videos', videos })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_s1',
+      toolName: 'bilibili_search',
+      result: videos,
+    })
+    // 顺序：videos 在 tool_result 之前
+    const videosIdx = posted.findIndex((m) => m.type === 'videos')
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_s1',
+    )
+    expect(videosIdx).toBeGreaterThanOrEqual(0)
+    expect(toolResultIdx).toBeGreaterThan(videosIdx)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('pushes tool_start + insight(rerank) + videos(reordered) + tool_result for video_rerank', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const candidates = [
+      { bvid: 'BV1', title: 'v1' },
+      { bvid: 'BV2', title: 'v2' },
+      { bvid: 'BV3', title: 'v3' },
+    ]
+    const rerankResult = {
+      items: [
+        { bvid: 'BV2', score: 0.9, reason: 'best' },
+        { bvid: 'BV1', score: 0.6, reason: 'ok' },
+        { bvid: 'BV3', score: 0.3, reason: 'low' },
+      ],
+      strategy: 'llm' as const,
+      trimmed: 0,
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_r1', 'video_rerank', { videos: candidates, intent: 'test' }),
+        toolResult('call_r1', 'video_rerank', rerankResult),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_r1',
+      toolName: 'video_rerank',
+      args: { videos: candidates, intent: 'test' },
+    })
+    expect(posted).toContainEqual({
+      type: 'insight',
+      kind: 'rerank',
+      data: rerankResult,
+    })
+    // 重排后的视频列表按 rerank items 的 bvid 顺序
+    expect(posted).toContainEqual({
+      type: 'videos',
+      videos: [
+        { bvid: 'BV2', title: 'v2' },
+        { bvid: 'BV1', title: 'v1' },
+        { bvid: 'BV3', title: 'v3' },
+      ],
+    })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_r1',
+      toolName: 'video_rerank',
+      result: rerankResult,
+    })
+    // 顺序：insight(rerank) -> videos -> tool_result
+    const insightIdx = posted.findIndex((m) => m.type === 'insight' && m.kind === 'rerank')
+    const videosIdx = posted.findIndex(
+      (m) => m.type === 'videos' && m.videos?.[0]?.bvid === 'BV2',
+    )
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_r1',
+    )
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
+    expect(videosIdx).toBeGreaterThan(insightIdx)
+    expect(toolResultIdx).toBeGreaterThan(videosIdx)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('pushes tool_start + insight(clarification) + tool_result for ask_clarification', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const clarification = {
+      question: '你想要鬼畜还是教程？',
+      options: ['鬼畜', '教程'],
+      reason: '意图模糊',
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_c1', 'ask_clarification', {
+          question: '你想要鬼畜还是教程？',
+          options: ['鬼畜', '教程'],
+          reason: '意图模糊',
+        }),
+        toolResult('call_c1', 'ask_clarification', clarification),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_c1',
+      toolName: 'ask_clarification',
+      args: {
+        question: '你想要鬼畜还是教程？',
+        options: ['鬼畜', '教程'],
+        reason: '意图模糊',
+      },
+    })
+    expect(posted).toContainEqual({
+      type: 'insight',
+      kind: 'clarification',
+      data: clarification,
+    })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_c1',
+      toolName: 'ask_clarification',
+      result: clarification,
+    })
+    const insightIdx = posted.findIndex(
+      (m) => m.type === 'insight' && m.kind === 'clarification',
+    )
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_c1',
+    )
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
+    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('pushes tool_start + insight(expansion) + tool_result for query_expand', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const expansion = {
+      keywords: ['鬼畜', 'mad'],
+      tags: [],
+      categories: [],
+      rationale: 'test',
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_e1', 'query_expand', { query: '鬼畜' }),
+        toolResult('call_e1', 'query_expand', expansion),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    expect(posted).toContainEqual({
+      type: 'insight',
+      kind: 'expansion',
+      data: expansion,
+    })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_e1',
+      toolName: 'query_expand',
+      result: expansion,
+    })
+  })
+
+  it('tool-error pushes error message with tool name context', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolErrorPart(
+          'timeout',
+          'call_err1',
+          'bilibili_search',
+        ),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+    const errorMsg = posted.find((m) => m.type === 'error')
+    expect(errorMsg).toBeDefined()
+    expect(errorMsg!.message).toContain('bilibili_search')
+    expect(errorMsg!.message).toContain('timeout')
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('registers 5 tools with streamText', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+    await handleChatMessage(port, session, makeChatMsg())
+    const toolsArg = aiMocks.streamText.mock.calls[0][0].tools
+    expect(Object.keys(toolsArg)).toEqual(
+      expect.arrayContaining([
+        'slang_understand',
+        'query_expand',
+        'bilibili_search',
+        'video_rerank',
+        'ask_clarification',
+      ]),
+    )
+    expect(Object.keys(toolsArg)).toHaveLength(5)
+  })
+
+  it('creates and releases WorkingMemoryStore per session', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+    await handleChatMessage(port, session, makeChatMsg())
+    expect(toolMocks.WorkingMemoryStore.create).toHaveBeenCalledTimes(1)
+    expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 })
