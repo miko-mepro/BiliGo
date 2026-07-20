@@ -1,0 +1,301 @@
+{
+  "categories": [
+    {
+      "id": 1,
+      "name": "动画",
+      "parentId": null
+    },
+    {
+      "id": 24,
+      "name": "MAD·AMV",
+      "parentId": 1
+    },
+    {
+      "id": 25,
+      "name": "MMD·3D",
+      "parentId": 1
+    },
+    {
+      "id": 47,
+      "name": "手书",
+      "parentId": 1
+    },
+    {
+      "id": 3,
+      "name": "音乐",
+      "parentId": null
+    },
+    {
+      "id": 28,
+      "name": "原创音乐",
+      "parentId": 3
+    },
+    {
+      "id": 31,
+      "name": "翻唱",
+      "parentId": 3
+    },
+    {
+      "id": 30,
+      "name": "VOCALOID",
+      "parentId": 3
+    },
+    {
+      "id": 193,
+      "name": "MV",
+      "parentId": 3
+    },
+    {
+      "id": 129,
+      "name": "舞蹈",
+      "parentId": null
+    },
+    {
+      "id": 20,
+      "name": "宅舞",
+      "parentId": 129
+    },
+    {
+      "id": 198,
+      "name": "街舞",
+      "parentId": 129
+    },
+    {
+      "id": 199,
+      "name": "明星舞蹈",
+      "parentId": 129
+    },
+    {
+      "id": 4,
+      "name": "游戏",
+      "parentId": null
+    },
+    {
+      "id": 17,
+      "name": "单机游戏",
+      "parentId": 4
+    },
+    {
+      "id": 171,
+      "name": "电子竞技",
+      "parentId": 4
+    },
+    {
+      "id": 172,
+      "name": "手机游戏",
+      "parentId": 4
+    },
+    {
+      "id": 65,
+      "name": "网络游戏",
+      "parentId": 4
+    },
+    {
+      "id": 36,
+      "name": "知识",
+      "parentId": null
+    },
+    {
+      "id": 201,
+      "name": "科学科普",
+      "parentId": 36
+    },
+    {
+      "id": 124,
+      "name": "社科·法律·心理",
+      "parentId": 36
+    },
+    {
+      "id": 228,
+      "name": "人文历史",
+      "parentId": 36
+    },
+    {
+      "id": 207,
+      "name": "财经商业",
+      "parentId": 36
+    },
+    {
+      "id": 122,
+      "name": "野生技术协会",
+      "parentId": 36
+    },
+    {
+      "id": 188,
+      "name": "科技",
+      "parentId": null
+    },
+    {
+      "id": 95,
+      "name": "数码",
+      "parentId": 188
+    },
+    {
+      "id": 230,
+      "name": "软件应用",
+      "parentId": 188
+    },
+    {
+      "id": 231,
+      "name": "计算机技术",
+      "parentId": 188
+    },
+    {
+      "id": 160,
+      "name": "生活",
+      "parentId": null
+    },
+    {
+      "id": 138,
+      "name": "搞笑",
+      "parentId": 160
+    },
+    {
+      "id": 21,
+      "name": "日常",
+      "parentId": 160
+    },
+    {
+      "id": 211,
+      "name": "美食",
+      "parentId": null
+    },
+    {
+      "id": 76,
+      "name": "美食制作",
+      "parentId": 211
+    },
+    {
+      "id": 212,
+      "name": "美食侦探",
+      "parentId": 211
+    },
+    {
+      "id": 213,
+      "name": "美食测评",
+      "parentId": 211
+    },
+    {
+      "id": 119,
+      "name": "鬼畜",
+      "parentId": null
+    },
+    {
+      "id": 22,
+      "name": "鬼畜调教",
+      "parentId": 119
+    },
+    {
+      "id": 26,
+      "name": "音MAD",
+      "parentId": 119
+    },
+    {
+      "id": 126,
+      "name": "人力VOCALOID",
+      "parentId": 119
+    },
+    {
+      "id": 217,
+      "name": "动物圈",
+      "parentId": null
+    },
+    {
+      "id": 218,
+      "name": "喵星人",
+      "parentId": 217
+    },
+    {
+      "id": 219,
+      "name": "汪星人",
+      "parentId": 217
+    },
+    {
+      "id": 5,
+      "name": "娱乐",
+      "parentId": null
+    },
+    {
+      "id": 71,
+      "name": "综艺",
+      "parentId": 5
+    },
+    {
+      "id": 241,
+      "name": "娱乐杂谈",
+      "parentId": 5
+    },
+    {
+      "id": 181,
+      "name": "影视",
+      "parentId": null
+    },
+    {
+      "id": 182,
+      "name": "影视杂谈",
+      "parentId": 181
+    },
+    {
+      "id": 183,
+      "name": "影视剪辑",
+      "parentId": 181
+    }
+  ],
+  "popularTags": [
+    "MMD",
+    "手书",
+    "AMV",
+    "MAD",
+    "动画",
+    "番剧",
+    "原创",
+    "翻唱",
+    "VOCALOID",
+    "古风",
+    "电音",
+    "纯音乐",
+    "流行",
+    "说唱",
+    "宅舞",
+    "舞蹈",
+    "choreography",
+    "翻跳",
+    "原创编舞",
+    "英雄联盟",
+    "王者荣耀",
+    "原神",
+    "我的世界",
+    "和平精英",
+    "MC",
+    "实况",
+    "攻略",
+    "游戏解说",
+    "单机",
+    "科普",
+    "知识",
+    "硬核",
+    "技术",
+    "编程",
+    "数码",
+    "评测",
+    "开箱",
+    "搞笑",
+    "日常",
+    "vlog",
+    "美食",
+    "吃播",
+    "探店",
+    "料理",
+    "鬼畜",
+    "鬼畜调教",
+    "音MAD",
+    "萌宠",
+    "猫",
+    "狗",
+    "综艺",
+    "明星",
+    "影视",
+    "解说",
+    "混剪"
+  ]
+}
