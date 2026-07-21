@@ -1,4 +1,15 @@
-import { useReducer, useRef, useEffect, type RefObject, type Dispatch } from 'react'
+import {
+  useReducer,
+  useRef,
+  useEffect,
+  createContext,
+  useContext,
+  useMemo,
+  type RefObject,
+  type Dispatch,
+  type ReactNode,
+  type ReactElement,
+} from 'react'
 import type {
   ChatMessage,
   AgentStep,
@@ -395,10 +406,17 @@ export interface UseChatResult {
   dispatch: Dispatch<ChatAction>
   send: (text: string) => void
   stop: () => void
+  /** Alias used by transplanted UI components */
+  sendMessage: (text: string) => void | Promise<void>
+  /** Alias used by transplanted UI components */
+  stopGeneration: () => void
+  clearChat: () => void
   connection: PortConnection | null
 }
 
-export function useChat(): UseChatResult {
+const ChatContext = createContext<UseChatResult | null>(null)
+
+function useChatController(): UseChatResult {
   const [state, dispatch] = useReducer(chatReducer, undefined, createInitialChatState)
   const stateRef = useRef<ConsumerState>({
     ...state,
@@ -451,6 +469,7 @@ export function useChat(): UseChatResult {
     dispatch({ type: 'ADD_MESSAGE', payload: userMessage })
     dispatch({ type: 'SET_LOADING', payload: true })
     dispatch({ type: 'SET_ERROR', payload: null })
+    dispatch({ type: 'CLEAR_CLARIFICATION' })
     dispatch({ type: 'SET_ACTIVITY', payload: { kind: 'thinking' } })
     stateRef.current = {
       ...stateRef.current,
@@ -471,13 +490,46 @@ export function useChat(): UseChatResult {
     connectionRef.current?.postMessage({ type: 'stop' })
   }
 
+  const clearChat = (): void => {
+    dispatch({ type: 'CLEAR_MESSAGES' })
+  }
+
   return {
     state,
     dispatch,
     send,
     stop,
+    sendMessage: send,
+    stopGeneration: stop,
+    clearChat,
     connection: connectionRef.current,
   }
+}
+
+export function ChatProvider({ children }: { children: ReactNode }): ReactElement {
+  const value = useChatController()
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
+}
+
+export function useChat(): UseChatResult {
+  const ctx = useContext(ChatContext)
+  if (!ctx) {
+    throw new Error('useChat must be used within a ChatProvider')
+  }
+  return ctx
+}
+
+export function useAgentInsights() {
+  const { state } = useChat()
+  return useMemo(
+    () => ({
+      understandings: state.understandings,
+      expansions: state.expansions,
+      reranks: state.reranks,
+      clarification: state.clarification,
+    }),
+    [state.understandings, state.expansions, state.reranks, state.clarification],
+  )
 }
 
 export { connectChatPort }

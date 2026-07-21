@@ -63,19 +63,18 @@ export function SettingsPanel({ settings, onClose, onSaved }: SettingsPanelProps
 
   return (
     <div style={{
-      position: 'fixed',
-      top: 20,
-      right: 20,
-      width: 420,
-      maxHeight: '80vh',
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      maxHeight: '100%',
       overflowY: 'auto',
       display: 'flex',
       flexDirection: 'column',
-      border: '1px solid #ccc',
+      border: 'none',
       background: '#fff',
-      borderRadius: 8,
-      boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-      zIndex: 2147483647,
+      borderRadius: 0,
+      boxShadow: 'none',
+      zIndex: 'auto',
       pointerEvents: 'auto',
     }}>
       <div style={{
