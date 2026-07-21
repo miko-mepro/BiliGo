@@ -11,6 +11,7 @@ const css = `
 
   /* Toggle Button - 哔哩哔哩粉色风格 */
   .bili-agent-toggle {
+    pointer-events: auto;
     position: fixed;
     top: 50%;
     right: -16px;

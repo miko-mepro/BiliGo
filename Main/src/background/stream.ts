@@ -234,7 +234,17 @@ function extractVideoCandidates(toolInput: unknown): BilibiliVideoCard[] {
   if (!toolInput || typeof toolInput !== 'object') return []
   const record = toolInput as { videos?: unknown }
   if (!Array.isArray(record.videos)) return []
-  return record.videos as BilibiliVideoCard[]
+  // 防御：video_rerank 的 inputSchema 只强制 bvid（模型可能省略 title/pic 等字段），
+  // 残缺卡片直接推给 UI 会导致 VideoCard 渲染崩溃（title.replace on undefined）。
+  // 只保留具备 UI 渲染必需字段（bvid + title）的完整卡片；全部残缺则返回空数组，
+  // 由调用方跳过 videos 推送（UI 保留上一次 bilibili_search 的完整列表）。
+  return (record.videos as BilibiliVideoCard[]).filter(
+    (card) =>
+      card &&
+      typeof card === 'object' &&
+      typeof card.bvid === 'string' &&
+      typeof card.title === 'string',
+  )
 }
 
 /**

@@ -27,7 +27,11 @@ function formatPlayCount(count: number): string {
  * Parses title and converts <em class="keyword"> tags to bold elements
  * Also strips any other HTML tags for security
  */
-function parseTitle(title: string): React.ReactNode {
+function parseTitle(title: string | undefined): React.ReactNode {
+  // 防御：title 缺失时不渲染任何内容，避免 undefined.replace 崩溃
+  if (typeof title !== 'string') {
+    return null;
+  }
   // First, remove dangerous tags and their content completely
   let sanitized = title;
   const dangerousTags = ['script', 'style', 'iframe', 'object', 'embed'];
