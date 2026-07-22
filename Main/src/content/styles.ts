@@ -192,7 +192,7 @@ const css = `
   }
 
   .bili-agent-panel__settings-button {
-    margin-right: 20px;
+    margin-right: 8px;
   }
 
   .bili-agent-panel__settings-button--active {
@@ -1569,7 +1569,7 @@ const css = `
     flex-shrink: 0;
     backdrop-filter: blur(10px);
     transition: all 0.25s ease;
-    margin-right: 20px;
+    margin-right: 8px;
   }
 
   .bili-agent-panel__new-chat-button:hover {
