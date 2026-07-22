@@ -118,6 +118,12 @@ export function AgentInsightCard(props: AgentInsightCardProps): React.ReactEleme
   );
 }
 
+// 修复 #4：渲染层数组兜底——持久化恢复(HYDRATE)的旧数据可能残缺，
+// 非数组一律按空数组处理，避免展开卡片时 .map/.length 崩溃
+function asArray<T>(value: T[] | undefined | null): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function renderBody(props: AgentInsightCardProps): React.ReactNode {
   switch (props.kind) {
     case 'understanding':
@@ -128,16 +134,16 @@ function renderBody(props: AgentInsightCardProps): React.ReactNode {
       ]} />;
     case 'expansion':
       return <>
-        <ChipGroup label="关键词" items={props.data.keywords} />
-        <ChipGroup label="标签" items={props.data.tags} />
-        <ChipGroup label="分区" items={props.data.categories} />
+        <ChipGroup label="关键词" items={asArray(props.data.keywords)} />
+        <ChipGroup label="标签" items={asArray(props.data.tags)} />
+        <ChipGroup label="分区" items={asArray(props.data.categories)} />
         <Rows rows={[["依据", props.data.rationale]]} />
       </>;
     case 'rerank':
       return <Rows rows={[
         ['策略', props.data.strategy === 'llm' ? 'LLM 智能排序' : 'Fallback 规则排序'],
         ['裁剪数量', `${props.data.trimmed}`],
-        ['保留结果', `${props.data.items.length}`],
+        ['保留结果', `${asArray(props.data.items).length}`],
       ]} />;
     case 'clarification':
       return <>
@@ -146,7 +152,7 @@ function renderBody(props: AgentInsightCardProps): React.ReactNode {
           ['原因', props.data.reason],
         ]} />
         <div style={styles.chips}>
-          {(props.data.options ?? []).map((option) => (
+          {asArray(props.data.options).map((option) => (
             <button key={option} type="button" style={styles.option} onClick={() => props.onAnswer(option)}>{option}</button>
           ))}
         </div>

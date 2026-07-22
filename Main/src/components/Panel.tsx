@@ -166,10 +166,19 @@ export function Panel({
 
   const initialPosition = storedPosition && !hasButtonMovedSignificantly ? storedPosition : defaultPosition;
 
+  // 修复 #8：持有最新的缩放位置偏移，供拖拽结束持久化时叠加（声明提前以供闭包引用）
+  const positionOffsetRef = useRef({ x: 0, y: 0 });
+
   const handleDragEnd = useCallback(
     (pos: { x: number; y: number }) => {
       onInteractionStateChange?.(false);
-      chrome.storage.local.set({ 'bili-agent-panel-position': pos });
+      // 修复 #8：持久化视觉位置（拖拽坐标 + 缩放偏移），保证下次恢复不回跳
+      chrome.storage.local.set({
+        'bili-agent-panel-position': {
+          x: pos.x + positionOffsetRef.current.x,
+          y: pos.y + positionOffsetRef.current.y,
+        },
+      });
 
       const anchorRect = toggleButtonRect ?? storedAnchorRect;
       if (anchorRect) {
@@ -183,6 +192,11 @@ export function Panel({
     (size: { width: number; height: number }) => {
       onInteractionStateChange?.(false);
       chrome.storage.local.set({ 'bili-agent-panel-size': size });
+      // 修复 #8：n/w 方向缩放会移动面板左上角，结束时把实际位置一并持久化，
+      // 避免下次恢复时面板回跳到缩放前的位置
+      chrome.storage.local.set({
+        'bili-agent-panel-position': effectivePositionRef.current,
+      });
     },
     [onInteractionStateChange],
   );
@@ -208,7 +222,7 @@ export function Panel({
     [handlePointerDown],
   );
 
-  const { size, resizeHandles, minWidth, minHeight, maxWidth, maxHeight, resizeByKeyboard } = useResizable({
+  const { size, positionOffset, resizeHandles, minWidth, minHeight, maxWidth, maxHeight, resizeByKeyboard } = useResizable({
     enabled: isOpen,
     directions: ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'],
     initialSize,
@@ -220,6 +234,23 @@ export function Panel({
     onResizeEnd: handleResizeEnd,
   });
 
+  // 修复 #8：同步最新偏移到 ref，供 handleDragEnd 闭包读取
+  positionOffsetRef.current = positionOffset;
+
+  // 修复 #8：面板实际位置 = 拖拽位置 + n/w 方向缩放产生的偏移，
+  // 这样拖动西/北手柄时被拖边缘跟随鼠标，另一侧保持固定
+  const effectivePosition = useMemo(
+    () => ({
+      x: position.x + positionOffset.x,
+      y: position.y + positionOffset.y,
+    }),
+    [position, positionOffset],
+  );
+
+  // 供 handleResizeEnd 持久化时读取最新实际位置（避免闭包过期）
+  const effectivePositionRef = useRef(effectivePosition);
+  effectivePositionRef.current = effectivePosition;
+
   const panelTransformOrigin = useMemo(() => {
     if (!toggleButtonRect) {
       return { x: '100%', y: '0%' };
@@ -227,20 +258,20 @@ export function Panel({
 
     const buttonCenterX = toggleButtonRect.left + toggleButtonRect.width / 2;
     const buttonCenterY = toggleButtonRect.top + toggleButtonRect.height / 2;
-    const originX = clamp(((buttonCenterX - position.x) / size.width) * 100, 0, 100);
-    const originY = clamp(((buttonCenterY - position.y) / size.height) * 100, 0, 100);
+    const originX = clamp(((buttonCenterX - effectivePosition.x) / size.width) * 100, 0, 100);
+    const originY = clamp(((buttonCenterY - effectivePosition.y) / size.height) * 100, 0, 100);
 
     return {
       x: `${originX.toFixed(2)}%`,
       y: `${originY.toFixed(2)}%`,
     };
-  }, [position, size, toggleButtonRect]);
+  }, [effectivePosition, size, toggleButtonRect]);
 
   const panelStyle = useMemo(
     () => ({
       position: 'fixed' as const,
-      left: position.x,
-      top: position.y,
+      left: effectivePosition.x,
+      top: effectivePosition.y,
       width: size.width,
       height: size.height,
       right: 'auto' as const,
@@ -250,7 +281,7 @@ export function Panel({
       '--bili-agent-panel-origin-x': panelTransformOrigin.x,
       '--bili-agent-panel-origin-y': panelTransformOrigin.y,
     }),
-    [panelTransformOrigin, position, size],
+    [panelTransformOrigin, effectivePosition, size],
   );
 
   // P3: history UI reserved only; HistoryDropdown arrives in P4
@@ -258,6 +289,8 @@ export function Panel({
   void isHistoryOpen;
   void setIsHistoryOpen;
 
+  // 修复 #1：新建对话只保留一个事件源——按钮派发一次事件（供 PanelChatBody 清空会话），
+  // 并直接调用 onNewChat 通知外部；监听器侧不再回调外部，避免"派发→监听→再派发"的同步无限递归
   const handleNewChat = useCallback(() => {
     window.dispatchEvent(new CustomEvent('bili-agent-new-chat'))
     onNewChat?.()
@@ -386,7 +419,7 @@ export function Panel({
         )
       ) : (
         <ChatProvider>
-          <PanelChatBody onNewChatEvent={onNewChat} />
+          <PanelChatBody />
         </ChatProvider>
       )}
 
@@ -436,17 +469,18 @@ export function Panel({
   );
 }
 
-function PanelChatBody({ onNewChatEvent }: { onNewChatEvent?: () => void }): React.ReactElement {
+function PanelChatBody(): React.ReactElement {
   const { clearChat } = useChat()
 
+  // 修复 #1：监听器只负责清空会话，不再触发外部 onNewChat 回调，
+  // 防止外部回调再次派发同名事件导致 Maximum call stack size exceeded
   useEffect(() => {
     const onNew = () => {
       clearChat()
-      onNewChatEvent?.()
     }
     window.addEventListener('bili-agent-new-chat', onNew)
     return () => window.removeEventListener('bili-agent-new-chat', onNew)
-  }, [clearChat, onNewChatEvent])
+  }, [clearChat])
 
   return (
     <>

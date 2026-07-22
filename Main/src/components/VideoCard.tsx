@@ -7,8 +7,12 @@ interface VideoCardProps {
 
 /**
  * Formats play count to B站 style (e.g., 12345 -> "1.2万")
+ * 修复 #3：play 可能缺失或类型异常，非法值一律按 0 处理，避免 toString 崩溃
  */
-function formatPlayCount(count: number): string {
+function formatPlayCount(count: unknown): string {
+  if (typeof count !== 'number' || !Number.isFinite(count)) {
+    return '0';
+  }
   if (count >= 100_000_000) {
     const yi = (count / 100_000_000).toFixed(1);
     const formatted = yi.endsWith('.0') ? yi.slice(0, -2) : yi;
@@ -75,13 +79,16 @@ export function VideoCard({ video }: VideoCardProps): React.ReactElement {
     [handleClick]
   );
 
-  const hasCover = video.pic && video.pic.trim().length > 0;
+  // 修复 #3：pic 可能是非字符串（如对象）或空串，先做运行时类型检查再调用字符串方法，
+  // 非法值统一按"无封面"处理
+  const rawPic = typeof video.pic === 'string' ? video.pic : '';
+  const hasCover = rawPic.trim().length > 0;
   const coverSrc = hasCover
-    ? video.pic.startsWith('//')
-      ? `https:${video.pic}`
-      : video.pic.startsWith('http://')
-        ? video.pic.replace(/^http:\/\//, 'https://')
-        : video.pic
+    ? rawPic.startsWith('//')
+      ? `https:${rawPic}`
+      : rawPic.startsWith('http://')
+        ? rawPic.replace(/^http:\/\//, 'https://')
+        : rawPic
     : '';
 
   return (

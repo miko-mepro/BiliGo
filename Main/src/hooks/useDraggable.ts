@@ -80,6 +80,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
     totalMovement: number;
     hasStarted: boolean;
     originalUserSelect: string;
+    /** 修复 #13：记录发起拖拽的 pointerId，忽略其他手指的事件 */
+    pointerId: number;
     moveHandler: (e: PointerEvent) => void;
     upHandler: (e: PointerEvent) => void;
     cachedRect: { width: number; height: number };
@@ -106,6 +108,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!dragStateRef.current || !enabledRef.current) return;
+      // 修复 #13：只响应发起拖拽的那个 pointer，第二根手指的移动不影响位置
+      if (e.pointerId !== dragStateRef.current.pointerId) return;
 
       const state = dragStateRef.current;
       const { startX, startY, startPosX, startPosY } = state;
@@ -177,6 +181,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
 
   const handlePointerUp = useCallback((e: PointerEvent) => {
     if (!dragStateRef.current) return;
+    // 修复 #13：第二根手指抬起/取消不应提前结束拖拽
+    if (e.pointerId !== dragStateRef.current.pointerId) return;
 
     const state = dragStateRef.current;
     const { moveHandler, upHandler } = state;
@@ -224,6 +230,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
 
     document.removeEventListener('pointermove', moveHandler);
     document.removeEventListener('pointerup', upHandler);
+    // 修复 #12：pointercancel 与 pointerup 共用清理函数，此处一并移除
+    document.removeEventListener('pointercancel', upHandler);
 
     dragStateRef.current = null;
 
@@ -258,6 +266,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent) => {
       if (!enabled || e.button !== 0) return;
+      // 修复 #13：已有拖拽进行中时忽略第二根手指的按下
+      if (dragStateRef.current !== null) return;
 
       const targetElement = handleRef?.current ?? dragRef.current;
       if (!targetElement) return;
@@ -281,6 +291,7 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
         totalMovement: 0,
         hasStarted: false,
         originalUserSelect: document.body.style.userSelect,
+        pointerId: e.pointerId,
         moveHandler: handlePointerMove,
         upHandler: handlePointerUp,
         cachedRect: { width: rect.width, height: rect.height },
@@ -299,6 +310,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
 
       document.addEventListener('pointermove', handlePointerMove);
       document.addEventListener('pointerup', handlePointerUp);
+      // 修复 #12：系统手势等取消 pointer 时也走清理逻辑，防止 userSelect:none 等状态泄漏
+      document.addEventListener('pointercancel', handlePointerUp);
     },
     [enabled, handleRef, handlePointerMove, handlePointerUp, position],
   );
@@ -312,6 +325,8 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRet
         const { moveHandler, upHandler, rafId } = dragStateRef.current;
         document.removeEventListener('pointermove', moveHandler);
         document.removeEventListener('pointerup', upHandler);
+        // 修复 #12：卸载时同步移除 pointercancel 监听
+        document.removeEventListener('pointercancel', upHandler);
         if (rafId !== null) {
           window.cancelAnimationFrame(rafId);
         }

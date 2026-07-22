@@ -1,5 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { useDraggable } from '../hooks/useDraggable.js'
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useChat } from '../content/chat-context.js'
 
 interface ChatInputProps {
@@ -10,16 +9,9 @@ export function ChatInput({ placeholder = '搜索你想看的视频...' }: ChatI
   const [inputValue, setInputValue] = useState('');
   const { sendMessage, stopGeneration, state } = useChat();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { position, isDragging, hasDragged, dragRef, handlePointerDown } = useDraggable();
-
-  const buttonStyle = useMemo(
-    () => ({
-      translate: `${position.x}px ${position.y}px`,
-      touchAction: 'none' as const,
-      cursor: isDragging ? 'grabbing' : 'grab',
-    }),
-    [position, isDragging]
-  );
+  // 修复 #9：取消发送/停止按钮的拖拽能力。
+  // 原实现把 useDraggable 的视口绝对坐标当作局部 translate 使用，
+  // 按钮会被拖进面板 overflow:hidden 区域而消失（停止按钮消失=无法停止生成）。
 
   const handleSubmit = useCallback(
     async (e?: React.FormEvent): Promise<void> => {
@@ -70,25 +62,10 @@ export function ChatInput({ placeholder = '搜索你想看的视频...' }: ChatI
 
   const isDisabled = !inputValue.trim();
 
-  const handleSendClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>): void => {
-      if (hasDragged) {
-        e.preventDefault();
-      }
-    },
-    [hasDragged]
-  );
-
-  const handleStopClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>): void => {
-      if (hasDragged) {
-        e.preventDefault();
-        return;
-      }
-      stopGeneration();
-    },
-    [hasDragged, stopGeneration]
-  );
+  // 修复 #9：按钮不再可拖拽，停止按钮直接触发停止生成
+  const handleStopClick = useCallback((): void => {
+    stopGeneration();
+  }, [stopGeneration]);
 
   return (
     <form className="bili-agent-chat-input" onSubmit={handleSubmit}>
@@ -107,28 +84,19 @@ export function ChatInput({ placeholder = '搜索你想看的视频...' }: ChatI
         {state.isLoading ? (
           <button
             type="button"
-            ref={dragRef as React.Ref<HTMLButtonElement>}
             className="bili-agent-chat-input__send bili-agent-chat-input__send--stop"
-            onPointerDown={handlePointerDown}
             onClick={handleStopClick}
-            style={buttonStyle}
             aria-label="停止生成"
             title="停止生成"
-            data-draggable="send-button"
           >
             <span className="bili-agent-chat-input__stop-icon" aria-hidden="true" />
           </button>
         ) : (
           <button
             type="submit"
-            ref={dragRef as React.Ref<HTMLButtonElement>}
             className="bili-agent-chat-input__send"
             disabled={isDisabled}
-            onPointerDown={handlePointerDown}
-            onClick={handleSendClick}
-            style={buttonStyle}
             aria-label="发送消息"
-            data-draggable="send-button"
           >
             <svg
               width="16"

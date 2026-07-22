@@ -24,6 +24,13 @@ export interface ResizeHandle {
 
 export interface UseResizableReturn {
   size: { width: number; height: number };
+  /**
+   * 修复 #8：n/w 方向缩放产生的位置偏移量（相对初始位置的累计值）。
+   * 拖动西/北侧手柄时宽高变化的同时元素左上角必须同步移动，
+   * 否则被拖边缘不动、另一侧移动，手柄脱离鼠标。
+   * 使用方需将该偏移叠加到元素的 left/top 上。
+   */
+  positionOffset: { x: number; y: number };
   isResizing: boolean;
   activeDirection: ResizeDirection | null;
   resizeHandles: ResizeHandle[];
@@ -80,6 +87,8 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
   } = options;
 
   const [size, setSize] = useState(initialSize);
+  // 修复 #8：n/w 方向缩放时左/上边缘需要同步移动，此偏移量由使用方叠加到 left/top
+  const [positionOffset, setPositionOffset] = useState({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState(false);
   const [activeDirection, setActiveDirection] = useState<ResizeDirection | null>(null);
 
@@ -107,6 +116,9 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
     startY: number;
     startWidth: number;
     startHeight: number;
+    /** 修复 #8：记录缩放开始时的位置偏移，n/w 方向在此基础上累计 */
+    startOffsetX: number;
+    startOffsetY: number;
     originalUserSelect: string;
     targetElement: HTMLElement;
     pointerId: number;
@@ -126,8 +138,13 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!resizeStateRef.current || !enabledRef.current) return;
+      // 修复 #13：只响应发起缩放的那个 pointer，忽略第二根手指的移动
+      if (e.pointerId !== resizeStateRef.current.pointerId) return;
 
-      const { direction, startX, startY, startWidth, startHeight } = resizeStateRef.current;
+      const {
+        direction, startX, startY, startWidth, startHeight,
+        startOffsetX, startOffsetY,
+      } = resizeStateRef.current;
 
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
@@ -148,15 +165,26 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
       }
 
       const constrained = constrainSize(newWidth, newHeight);
+      // 修复 #8：w/n 方向缩放时，左/上边缘随鼠标移动——位置偏移量 = 实际尺寸变化量
+      // （用约束后的尺寸计算，保证尺寸被 min/max 夹取时边缘不会脱离）
+      setPositionOffset({
+        x: direction.includes('w')
+          ? startOffsetX + (startWidth - constrained.width)
+          : startOffsetX,
+        y: direction.includes('n')
+          ? startOffsetY + (startHeight - constrained.height)
+          : startOffsetY,
+      });
       setSize(constrained);
       onResizeRef.current?.(constrained);
     },
     [constrainSize],
   );
 
-  const handlePointerUp = useCallback((_e: PointerEvent) => {
-    void _e;
+  const handlePointerUp = useCallback((e: PointerEvent) => {
     if (!resizeStateRef.current) return;
+    // 修复 #13：第二根手指抬起不应提前结束缩放
+    if (e.pointerId !== resizeStateRef.current.pointerId) return;
 
     const { targetElement, pointerId, moveHandler, upHandler } = resizeStateRef.current;
     if (targetElement && targetElement.hasPointerCapture(pointerId)) {
@@ -169,6 +197,8 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
 
     document.removeEventListener('pointermove', moveHandler);
     document.removeEventListener('pointerup', upHandler);
+    // 修复 #12：pointercancel 与 pointerup 共用清理函数，此处一并移除
+    document.removeEventListener('pointercancel', upHandler);
 
     resizeStateRef.current = null;
 
@@ -184,6 +214,8 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
   const createHandlePointerDown = useCallback(
     (direction: ResizeDirection) => (e: ReactPointerEvent) => {
       if (!enabled || e.button !== 0) return;
+      // 修复 #13：已有缩放进行中时忽略第二根手指的按下
+      if (resizeStateRef.current !== null) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -196,6 +228,8 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
         startY: e.clientY,
         startWidth: size.width,
         startHeight: size.height,
+        startOffsetX: positionOffset.x,
+        startOffsetY: positionOffset.y,
         originalUserSelect: document.body.style.userSelect,
         targetElement: target,
         pointerId: e.pointerId,
@@ -215,8 +249,10 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
 
       document.addEventListener('pointermove', handlePointerMove);
       document.addEventListener('pointerup', handlePointerUp);
+      // 修复 #12：系统手势等取消 pointer 时也要走清理逻辑，否则 userSelect:none 等状态泄漏
+      document.addEventListener('pointercancel', handlePointerUp);
     },
-    [enabled, size, onResizeStart, handlePointerMove, handlePointerUp],
+    [enabled, size, positionOffset, onResizeStart, handlePointerMove, handlePointerUp],
   );
 
   useEffect(() => {
@@ -228,6 +264,8 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
         const { moveHandler, upHandler } = resizeStateRef.current;
         document.removeEventListener('pointermove', moveHandler);
         document.removeEventListener('pointerup', upHandler);
+        // 修复 #12：卸载时同步移除 pointercancel 监听
+        document.removeEventListener('pointercancel', upHandler);
       }
     };
   }, []);
@@ -268,6 +306,11 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
       }
 
       const constrained = constrainSize(newWidth, newHeight);
+      // 修复 #8：键盘缩放同样在 w/n 方向同步位置偏移，保持左/上边缘跟随
+      setPositionOffset((prev) => ({
+        x: direction.includes('w') ? prev.x + (size.width - constrained.width) : prev.x,
+        y: direction.includes('n') ? prev.y + (size.height - constrained.height) : prev.y,
+      }));
       setSize(constrained);
       onResizeRef.current?.(constrained);
     },
@@ -276,6 +319,7 @@ export function useResizable(options: UseResizableOptions = {}): UseResizableRet
 
   return {
     size,
+    positionOffset,
     isResizing,
     activeDirection,
     resizeHandles,

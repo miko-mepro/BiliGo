@@ -1,6 +1,6 @@
 /// <reference types="@types/chrome" />
 
-import type { CSMessage, SWMessage } from '../background/port-protocol.js'
+import { isSWMessage, type CSMessage, type SWMessage } from '../background/port-protocol.js'
 
 export const PORT_NAME = 'bili-agent-chat'
 export const PING_INTERVAL_MS = 25_000
@@ -10,6 +10,8 @@ export interface PortConnection {
   postMessage(msg: CSMessage): void
   onMessage(handler: (msg: SWMessage) => void): () => void
   disconnect(): void
+  /** 修复 #5：暴露断线状态，供上层在发送前判断连接是否可用 */
+  isDisconnected(): boolean
 }
 
 export interface ConnectHandlers {
@@ -29,6 +31,9 @@ export function connectChatPort(handlers: ConnectHandlers): PortConnection {
         return () => {}
       },
       disconnect(): void {},
+      isDisconnected(): boolean {
+        return true
+      },
     }
   }
 
@@ -79,14 +84,15 @@ export function connectChatPort(handlers: ConnectHandlers): PortConnection {
   }
 
   const messageListener = (msg: unknown): void => {
-    if (msg === null || typeof msg !== 'object') return
-    const candidate = msg as SWMessage
-    if (candidate.type === 'pong') {
+    // 修复 #2：入口处用 isSWMessage 做运行时校验，非法消息（如 videos:null）直接丢弃，
+    // 避免残缺数据流入 reducer 后在渲染层崩溃
+    if (!isSWMessage(msg)) return
+    if (msg.type === 'pong') {
       resetPongTimer()
       return
     }
     for (const handler of messageHandlers) {
-      handler(candidate)
+      handler(msg)
     }
   }
 
@@ -123,6 +129,9 @@ export function connectChatPort(handlers: ConnectHandlers): PortConnection {
       } catch {
         // port already disconnected
       }
+    },
+    isDisconnected(): boolean {
+      return disconnected
     },
   }
 }

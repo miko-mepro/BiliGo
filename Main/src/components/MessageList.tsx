@@ -47,11 +47,13 @@ export function MessageList({
   const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
 
   // Reset filters when videos change (new search results)
+  // 修复 #11：依赖视频数组本身而非 length——两次搜索返回相同数量时长度不变，
+  // 旧筛选条件会残留；SET_VIDEOS 每次都会产生新数组引用，以引用为依赖即可
   useEffect(() => {
     setSortField('play');
     setDateFilter('all');
     setDurationFilter('all');
-  }, [videos.length]);
+  }, [videos]);
 
   // Apply sort and filter client-side
   const processedVideos = useMemo(() => {
@@ -139,63 +141,62 @@ export function MessageList({
           </p>
         </div>
       ) : (
-        <>
-          <div className="bili-agent-message-list__messages">
-            {renderItems.map((item, idx) => {
-              if (item.type === 'message') {
-                return (
-                  <ChatMessageItem
-                    key={`msg-${item.message.timestamp}-${item.index}`}
-                    message={item.message}
-                    isStreaming={item.isStreaming}
-                    streamingContent={item.streamingContent}
-                    streamingReasoning={item.isStreaming ? state.streamingReasoning : ''}
-                    activity={item.isStreaming ? state.activity : null}
-                  />
-                );
-              }
-              return renderInsightItem(item, idx);
-            })}
+        <div className="bili-agent-message-list__messages">
+          {renderItems.map((item, idx) => {
+            if (item.type === 'message') {
+              return (
+                <ChatMessageItem
+                  key={`msg-${item.message.timestamp}-${item.index}`}
+                  message={item.message}
+                  isStreaming={item.isStreaming}
+                  streamingContent={item.streamingContent}
+                  streamingReasoning={item.isStreaming ? state.streamingReasoning : ''}
+                  activity={item.isStreaming ? state.activity : null}
+                />
+              );
+            }
+            return renderInsightItem(item, idx);
+          })}
 
-            {hasVideos && (
-              <FilterSortControls
-                sortField={sortField}
-                dateFilter={dateFilter}
-                durationFilter={durationFilter}
-                onSortChange={setSortField}
-                onDateFilterChange={setDateFilter}
-                onDurationFilterChange={setDurationFilter}
-              />
-            )}
+          {hasVideos && (
+            <FilterSortControls
+              sortField={sortField}
+              dateFilter={dateFilter}
+              durationFilter={durationFilter}
+              onSortChange={setSortField}
+              onDateFilterChange={setDateFilter}
+              onDurationFilterChange={setDurationFilter}
+            />
+          )}
 
-            {hasProcessedVideos && (
-              <div className="bili-agent-video-grid" data-testid="video-grid">
-                {processedVideos.map((video) => (
-                  <VideoCard key={video.bvid} video={video} />
-                ))}
-              </div>
-            )}
+          {hasProcessedVideos && (
+            <div className="bili-agent-video-grid" data-testid="video-grid">
+              {processedVideos.map((video) => (
+                <VideoCard key={video.bvid} video={video} />
+              ))}
+            </div>
+          )}
 
-            {hasVideos && !hasProcessedVideos && (
-              <div className="bili-agent-message-list__no-results" data-testid="no-results">
-                <p>没有符合筛选条件的视频</p>
-              </div>
-            )}
+          {hasVideos && !hasProcessedVideos && (
+            <div className="bili-agent-message-list__no-results" data-testid="no-results">
+              <p>没有符合筛选条件的视频</p>
+            </div>
+          )}
 
-            {clarification && (
-              <AgentInsightCard
-                kind="clarification"
-                data={clarification}
-                onAnswer={(option) => sendMessage(option)}
-              />
-            )}
+          {clarification && (
+            <AgentInsightCard
+              kind="clarification"
+              data={clarification}
+              onAnswer={(option) => sendMessage(option)}
+            />
+          )}
 
-            <div ref={messagesEndRef} />
-          </div>
-
-          {state.error && <ErrorDisplay error={state.error} />}
-        </>
+          <div ref={messagesEndRef} />
+        </div>
       )}
+
+      {/* 修复 #7：错误提示移到空态/非空态分支之外，空会话断线时也能看到错误信息 */}
+      {state.error && <ErrorDisplay error={state.error} />}
     </div>
   );
 }

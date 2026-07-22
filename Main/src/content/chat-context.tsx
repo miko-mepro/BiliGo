@@ -278,6 +278,54 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   }
 }
 
+// ===== 修复 #4：insight 数据运行时最小字段守卫 =====
+// SW 推送的 insight.data 之前只做 TypeScript 断言，残缺数据会在卡片展开时崩溃；
+// 这里按 kind 校验必备字段，数组字段必须是数组，非法数据整条丢弃
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/** understanding：original/normalized/explanation 必须是字符串 */
+function isValidUnderstanding(data: unknown): data is SlangUnderstandResult {
+  return (
+    isRecord(data) &&
+    typeof data.original === 'string' &&
+    typeof data.normalized === 'string' &&
+    typeof data.explanation === 'string'
+  )
+}
+
+/** expansion：三个数组字段必须是数组，rationale 必须是字符串 */
+function isValidExpansion(data: unknown): data is QueryExpandResult {
+  return (
+    isRecord(data) &&
+    Array.isArray(data.keywords) &&
+    Array.isArray(data.tags) &&
+    Array.isArray(data.categories) &&
+    typeof data.rationale === 'string'
+  )
+}
+
+/** rerank：items 必须是数组，trimmed 必须是数字 */
+function isValidRerank(data: unknown): data is RerankResult {
+  return (
+    isRecord(data) &&
+    Array.isArray(data.items) &&
+    typeof data.trimmed === 'number'
+  )
+}
+
+/** clarification：question/reason 必须是字符串，options 缺省或为数组 */
+function isValidClarification(data: unknown): data is ClarificationRequest {
+  return (
+    isRecord(data) &&
+    typeof data.question === 'string' &&
+    typeof data.reason === 'string' &&
+    (data.options === undefined || Array.isArray(data.options))
+  )
+}
+
 function ensureAssistantPlaceholder(
   stateRef: ConsumerStateRef,
   dispatch: Dispatch<ChatAction>,
@@ -337,27 +385,33 @@ export function consumeSWMessage(
       break
 
     case 'videos':
+      // 修复 #2：双保险——即使 Port 层校验被绕过（如测试直接调用），也保证 videos 是数组
+      if (!Array.isArray(msg.videos)) break
       dispatch({ type: 'SET_VIDEOS', payload: msg.videos })
       break
 
     case 'insight': {
-      const data = msg.data as
-        | SlangUnderstandResult
-        | QueryExpandResult
-        | RerankResult
-        | ClarificationRequest
+      // 修复 #4：按 kind 做运行时字段守卫，残缺数据整条丢弃，不进入 state
       switch (msg.kind) {
         case 'understanding':
-          dispatch({ type: 'ADD_UNDERSTANDING', payload: data as SlangUnderstandResult })
+          if (isValidUnderstanding(msg.data)) {
+            dispatch({ type: 'ADD_UNDERSTANDING', payload: msg.data })
+          }
           break
         case 'expansion':
-          dispatch({ type: 'ADD_EXPANSION', payload: data as QueryExpandResult })
+          if (isValidExpansion(msg.data)) {
+            dispatch({ type: 'ADD_EXPANSION', payload: msg.data })
+          }
           break
         case 'rerank':
-          dispatch({ type: 'ADD_RERANK', payload: data as RerankResult })
+          if (isValidRerank(msg.data)) {
+            dispatch({ type: 'ADD_RERANK', payload: msg.data })
+          }
           break
         case 'clarification':
-          dispatch({ type: 'SET_CLARIFICATION', payload: data as ClarificationRequest })
+          if (isValidClarification(msg.data)) {
+            dispatch({ type: 'SET_CLARIFICATION', payload: msg.data })
+          }
           break
       }
       break
@@ -389,6 +443,8 @@ export function consumeSWMessage(
       })
       dispatch({ type: 'SET_LOADING', payload: false })
       dispatch({ type: 'SET_ACTIVITY', payload: null })
+      // 修复 #6：错误终止路径清空流式缓冲，避免旧半句串入下一次回答
+      dispatch({ type: 'CLEAR_STREAMING' })
       stateRef.current = {
         ...stateRef.current,
         assistantPlaceholderCreated: false,
@@ -432,25 +488,58 @@ function useChatController(): UseChatResult {
   }, [state])
 
   useEffect(() => {
-    const handlers: ConnectHandlers = {
-      onMessage: (msg: SWMessage) => {
-        consumeSWMessage(msg, stateRef, dispatch)
-      },
-      onDisconnect: () => {
-        dispatch({
-          type: 'SET_ERROR',
-          payload: { message: '连接已断开，请重试' },
-        })
-        dispatch({ type: 'SET_LOADING', payload: false })
-        dispatch({ type: 'SET_ACTIVITY', payload: null })
-        stateRef.current = {
-          ...stateRef.current,
-          assistantPlaceholderCreated: false,
-        }
-      },
+    // 修复 #5：把建连逻辑抽成可重复调用的函数，断线后自动重连（单实例、指数退避），
+    // 避免 Port 断开后 postMessage 静默失败、用户永久卡在 loading
+    let unmounted = false
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let reconnectAttempts = 0
+
+    const scheduleReconnect = (): void => {
+      if (unmounted || reconnectTimer !== null) return
+      // 指数退避：1s、2s、4s……上限 30s
+      const delay = Math.min(1000 * 2 ** reconnectAttempts, 30_000)
+      reconnectAttempts += 1
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        if (unmounted) return
+        connect()
+      }, delay)
     }
-    connectionRef.current = connectChatPort(handlers)
+
+    const connect = (): void => {
+      const handlers: ConnectHandlers = {
+        onMessage: (msg: SWMessage) => {
+          // 收到任意消息说明链路健康，重置退避计数
+          reconnectAttempts = 0
+          consumeSWMessage(msg, stateRef, dispatch)
+        },
+        onDisconnect: () => {
+          dispatch({
+            type: 'SET_ERROR',
+            payload: { message: '连接已断开，请重试' },
+          })
+          dispatch({ type: 'SET_LOADING', payload: false })
+          dispatch({ type: 'SET_ACTIVITY', payload: null })
+          // 修复 #6：断线终止路径同样清空流式缓冲，防止旧内容串入下一次回答
+          dispatch({ type: 'CLEAR_STREAMING' })
+          stateRef.current = {
+            ...stateRef.current,
+            assistantPlaceholderCreated: false,
+          }
+          // 修复 #5：断线后调度单实例重连
+          scheduleReconnect()
+        },
+      }
+      connectionRef.current = connectChatPort(handlers)
+    }
+
+    connect()
     return () => {
+      unmounted = true
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
       connectionRef.current?.disconnect()
       connectionRef.current = null
     }
@@ -460,6 +549,17 @@ function useChatController(): UseChatResult {
     const trimmed = text.trim()
     if (!trimmed) return
     if (stateRef.current.isLoading) return
+
+    // 修复 #5：发送前确认连接可用；连接不可用时立即报错，不进入 loading，
+    // 避免消息静默丢失后按钮永久卡在 loading 状态
+    const connection = connectionRef.current
+    if (!connection || connection.isDisconnected()) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: { message: '连接已断开，正在重连，请稍后重试' },
+      })
+      return
+    }
 
     const userMessage: ChatMessage = {
       role: 'user',
@@ -479,11 +579,17 @@ function useChatController(): UseChatResult {
     const committedMessages = [...stateRef.current.messages, userMessage].filter(
       (m) => !(m.role === 'assistant' && m.content === '' && !(m.steps && m.steps.length > 0)),
     )
-    connectionRef.current?.postMessage({
+    connection.postMessage({
       type: 'chat',
       messages: committedMessages,
       conversationId: stateRef.current.conversationId,
     })
+    // 修复 #5：postMessage 内部失败会触发 fireDisconnect，此处再次确认；
+    // 若发送后连接已断开，立即恢复 loading 状态（onDisconnect 也会兜底处理）
+    if (connection.isDisconnected()) {
+      dispatch({ type: 'SET_LOADING', payload: false })
+      dispatch({ type: 'SET_ACTIVITY', payload: null })
+    }
   }
 
   const stop = (): void => {

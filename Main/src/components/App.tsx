@@ -62,10 +62,6 @@ export function App(): React.ReactElement {
     isInteractingRef.current = isInteracting
   }, [])
 
-  const handleNewChat = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('bili-agent-new-chat'))
-  }, [])
-
   useEffect(() => {
     if (!isOpen) {
       return
@@ -103,7 +99,6 @@ export function App(): React.ReactElement {
         toggleButtonRect={toggleButtonRect}
         onClose={handleClose}
         onInteractionStateChange={handlePanelInteractionStateChange}
-        onNewChat={handleNewChat}
       />
     </div>
   )
