@@ -33,6 +33,7 @@ import {
   saveConversation,
   loadConversation,
   updateTitle,
+  getHistoryIndex,
 } from '../lib/history/store.js'
 import {
   useConversationSaver,
@@ -48,6 +49,14 @@ export type AgentActivity = { kind: 'thinking' | 'responding' | 'tool'; label?: 
  * 沿用旧仓库事件名约定，payload.detail.conversationId 携带目标会话 ID。
  */
 export const HISTORY_LOAD_EVENT = 'biliagent:history-load'
+
+/**
+ * 标题兜底超时阈值（毫秒）。
+ * 设计依据 3.4 §8：SW 标题请求发出后 ~12s 内既无 title 也无 error 响应时，
+ * CS 用临时标题（首条 user 消息前 20 字）置 titleFinal=true 并派发 dirty 事件。
+ * 取 12s：略大于 SW 侧 generateText 的 10s AbortSignal.timeout + 回推网络余量。
+ */
+const TITLE_FALLBACK_TIMEOUT_MS = 12_000
 
 /**
  * 标题生成纯函数：用首条 user 消息前 20 字作为临时标题（降级用）。
@@ -530,6 +539,13 @@ function useChatController(): UseChatResult {
   const connectionRef = useRef<PortConnection | null>(null)
   // 标题请求去重：同一 conversationId 只请求一次 generate_title
   const titleRequestedRef = useRef<Set<string>>(new Set())
+  // 修复 #8（reviewer SB-9 Important #2）：标题兜底超时定时器 Map。
+  // SW 崩溃或 Port 异常时既无 {type:'title'} 也无 {type:'error'} 回推，
+  // 临时标题永久残留、titleFinal 永不置位，违反 3.4 §8。
+  // 发送 generate_title 时同时启动 12s 兜底定时器；到期后若该 conversationId
+  // 的标题仍未最终化（getHistoryIndex 查 titleFinal 仍 false），调 updateTitle
+  // 写入临时标题并派发 HISTORY_INDEX_DIRTY_EVENT。收到 title 成功响应时清除。
+  const titleTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   useEffect(() => {
     stateRef.current = {
@@ -563,6 +579,17 @@ function useChatController(): UseChatResult {
           // 收到任意消息说明链路健康，重置退避计数
           reconnectAttempts = 0
           consumeSWMessage(msg, stateRef, dispatch)
+          // 修复 #8（reviewer SB-9 Important #2）：收到 title 成功响应时清除兜底定时器。
+          // 注意：即使 conversationId 与当前会话不匹配（用户已切换会话），也要清除
+          // 该 conversationId 的兜底定时器，避免定时器到期误降级覆盖 SW 已返回的正式标题。
+          // 放在 consumeSWMessage 之后，保持 consumeSWMessage 作为独立纯函数不变。
+          if (msg.type === 'title') {
+            const timer = titleTimeoutsRef.current.get(msg.conversationId)
+            if (timer !== undefined) {
+              clearTimeout(timer)
+              titleTimeoutsRef.current.delete(msg.conversationId)
+            }
+          }
         },
         onDisconnect: () => {
           dispatch({
@@ -591,6 +618,12 @@ function useChatController(): UseChatResult {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
       }
+      // 修复 #8（reviewer SB-9 Important #2）：组件卸载时清理所有标题兜底定时器，
+      // 避免卸载后定时器仍触发 updateTitle/dirty 事件造成泄漏
+      for (const timer of titleTimeoutsRef.current.values()) {
+        clearTimeout(timer)
+      }
+      titleTimeoutsRef.current.clear()
       connectionRef.current?.disconnect()
       connectionRef.current = null
     }
@@ -659,6 +692,28 @@ function useChatController(): UseChatResult {
             conversationId: current.conversationId,
             messages: messages.slice(0, 2),
           })
+          // 修复 #8（reviewer SB-9 Important #2）：启动 12s 兜底定时器。
+          // SW 无响应（既无 title 也无 error）时，到期后用临时标题降级：
+          // 查 getHistoryIndex 该记录 titleFinal 仍 false 才写 updateTitle
+          // 并派发 HISTORY_INDEX_DIRTY_EVENT。以历史索引记录为准操作，
+          // 不依赖当前 state（竞态：定时器触发时 conversationId 可能已切换）。
+          const convIdForTitle = current.conversationId
+          const fallbackTimer = setTimeout(() => {
+            titleTimeoutsRef.current.delete(convIdForTitle)
+            void (async () => {
+              try {
+                const index = await getHistoryIndex()
+                const record = index.find((r) => r.id === convIdForTitle)
+                // 仍 false 才降级；已由 SW title 响应置位则跳过
+                if (!record || record.titleFinal) return
+                await updateTitle(convIdForTitle, tempTitle)
+                window.dispatchEvent(new Event(HISTORY_INDEX_DIRTY_EVENT))
+              } catch {
+                // 降级失败不阻塞聊天
+              }
+            })()
+          }, TITLE_FALLBACK_TIMEOUT_MS)
+          titleTimeoutsRef.current.set(convIdForTitle, fallbackTimer)
         }
       }
     } catch {
@@ -708,6 +763,16 @@ function useChatController(): UseChatResult {
               updatedAt: data.lastActiveAt,
             },
           })
+          // 修复 #7（reviewer SB-9 Important #1）：REHYDRATE 后显式重置
+          // assistantPlaceholderCreated=false。reducer 只管 ChatState 字段，
+          // 不触及 ConsumerStateRef 的 assistantPlaceholderCreated；若上一会话
+          // 已创建占位（=true），加载历史后下一次 send() 时 ensureAssistantPlaceholder
+          // 会提前 return，首条 assistant 占位不创建，流式 chunk 无处挂载。
+          // 与 done/error/onDisconnect 路径的既有写法一致（见 466/482/578 行）。
+          stateRef.current = {
+            ...stateRef.current,
+            assistantPlaceholderCreated: false,
+          }
         } catch {
           // 加载失败不阻塞
         }
@@ -719,10 +784,12 @@ function useChatController(): UseChatResult {
     }
   }, [])
 
-  // 标题生成的超时降级：SW 若完全不响应（既无 title 也无 error），
-  // CS 侧不做额外超时降级，因为 tempTitle 已落盘，标题为非关键功能，
-  // 用户可双击重命名。SW 返回 error 时由 consumeSWMessage 的 title 分支已知
-  // （error 走通用 error 分支，不覆盖 tempTitle）。
+  // 标题兜底超时降级说明（修复 #8 / reviewer SB-9 Important #2）：
+  // SW 标题请求发出后 12s 内若无响应（既无 title 也无 error），由
+  // saveCurrentConversation 内的兜底定时器用临时标题降级并置 titleFinal=true。
+  // 收到 {type:'title'} 成功响应时在 onMessage 回调里清除对应定时器。
+  // SW 返回 error 时走通用 error 分支，不覆盖 tempTitle，但定时器到期后
+  // 仍会用 tempTitle 降级置位 titleFinal（符合 3.4 §8：失败用首条 user 前 20 字）。
 
   const send = (text: string): void => {
     const trimmed = text.trim()
