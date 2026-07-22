@@ -1,6 +1,6 @@
 /// <reference types="@types/chrome" />
 
-import { streamText, isStepCount, tool } from 'ai'
+import { streamText, generateText, isStepCount, tool } from 'ai'
 import type { ModelMessage, LanguageModel, ToolSet, TextStreamPart } from 'ai'
 import { z } from 'zod'
 import type { ChatMessage, BilibiliVideoCard } from '../lib/shared-types/index.js'
@@ -425,6 +425,72 @@ export function handleStop(session: PortSession): void {
   }
 }
 
+/**
+ * 标题生成系统提示：要求模型生成 20 字以内的中文对话标题，只输出标题本身。
+ * 失败由调用方降级处理（首条 user 消息前 20 字）。
+ */
+const TITLE_SYSTEM_PROMPT = '生成20字以内的中文对话标题，只输出标题本身，不要加引号或标点前缀。'
+
+/** 标题最大字符数（含中文，按字符数截断） */
+const TITLE_MAX_CHARS = 20
+
+/**
+ * 处理 generate_title 请求：经单 Port 复用链路，用 AI SDK generateText（无工具循环）
+ * 生成 ≤20 字标题并回推 {type:'title'}；任何失败回 {type:'error'}。
+ *
+ * 设计依据 3.4 §8 / 3.2 §4.9：
+ * - 复用现有 Port（不开新 Port）
+ * - 10s 超时（AbortSignal.timeout），避免长时间阻塞
+ * - 复用 stream.ts 内 resolveActiveProvider/createModel，不重复造轮子
+ * - 无 provider 配置或 generateText 失败时回 error，由 CS 侧本地降级
+ */
+export async function handleGenerateTitle(
+  port: chrome.runtime.Port,
+  session: PortState,
+  msg: Extract<CSMessage, { type: 'generate_title' }>,
+): Promise<void> {
+  // 复用与 chat 相同的 provider 解析路径
+  const settings = await readBiliAgentSettings()
+  const config = resolveActiveProvider(settings.providers, settings.activeProviderId)
+  const validation = config ? validateProviderConfig(config) : { valid: false, errors: ['未配置活跃 Provider'] }
+
+  if (!config || !validation.valid) {
+    postToPort(port, session, {
+      type: 'error',
+      message: friendlyMessage('PROVIDER_NOT_CONFIGURED'),
+      code: 'PROVIDER_NOT_CONFIGURED',
+    })
+    return
+  }
+
+  const model: LanguageModel = createModel(config)
+  const modelMessages = toModelMessages(msg.messages)
+
+  try {
+    const result = await generateText({
+      model,
+      system: TITLE_SYSTEM_PROMPT,
+      messages: modelMessages,
+      abortSignal: AbortSignal.timeout(10_000),
+    })
+    if (session.disconnected) return
+    // 截断到 20 字（按字符数，兼容中文）
+    const rawTitle = (result.text ?? '').trim()
+    const title = rawTitle.slice(0, TITLE_MAX_CHARS)
+    postToPort(port, session, { type: 'title', conversationId: msg.conversationId, title })
+  } catch (err) {
+    if (session.disconnected) return
+    // 超时/abort/网络错误等均回 error，由 CS 侧本地降级
+    const message = err instanceof Error ? err.message : String(err)
+    const code = inferErrorCode(message)
+    postToPort(port, session, {
+      type: 'error',
+      message: friendlyMessage(code, message),
+      code,
+    })
+  }
+}
+
 export function setupPortListener(portName = 'bili-agent-chat'): void {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== portName) return
@@ -442,6 +508,9 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
       switch (msg.type) {
         case 'chat':
           void handleChatMessage(port, session, msg)
+          break
+        case 'generate_title':
+          void handleGenerateTitle(port, session, msg)
           break
         case 'ping':
           handlePing(port, session)

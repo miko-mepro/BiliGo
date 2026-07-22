@@ -601,3 +601,98 @@ describe('invariants', () => {
     expect(afterComplete).toBe(userOnly)
   })
 })
+
+// ===== P4 hydration 组 + 标题降级纯函数 =====
+
+describe('hydration guard', () => {
+  it('does not clobber when messages already exist even without loading/streaming', () => {
+    // 防覆盖：已有消息（无 loading/streaming）时 HYDRATE 只置 hydrated=true
+    const existing = [message('user', '当前'), message('assistant', '回答')]
+    const initial = state({ hydrated: false, messages: existing })
+    const originalId = initial.conversationId
+    const payload = persistedConversation({
+      messages: [message('user', '历史覆盖')],
+      conversationId: 'conv_should_not_apply',
+    })
+    const after = chatReducer(initial, { type: 'HYDRATE', payload })
+    expect(after.hydrated).toBe(true)
+    // 消息不被覆盖
+    expect(after.messages).toBe(existing)
+    expect(after.conversationId).toBe(originalId)
+  })
+
+  it('does not clobber when hydrated already true', () => {
+    const initial = state({ hydrated: true, messages: [] })
+    const payload = persistedConversation({
+      messages: [message('user', '历史')],
+      conversationId: 'conv_x',
+    })
+    const after = chatReducer(initial, { type: 'HYDRATE', payload })
+    expect(after.hydrated).toBe(true)
+    expect(after.conversationId).toBe(initial.conversationId)
+  })
+
+  it('does not clobber when isLoading true', () => {
+    const initial = state({ hydrated: false, isLoading: true })
+    const payload = persistedConversation({ conversationId: 'conv_y' })
+    const after = chatReducer(initial, { type: 'HYDRATE', payload })
+    expect(after.hydrated).toBe(true)
+    expect(after.conversationId).toBe(initial.conversationId)
+  })
+
+  it('does not clobber when streamingContent non-empty', () => {
+    const initial = state({ hydrated: false, streamingContent: '流式中' })
+    const payload = persistedConversation({ conversationId: 'conv_z' })
+    const after = chatReducer(initial, { type: 'HYDRATE', payload })
+    expect(after.hydrated).toBe(true)
+    expect(after.conversationId).toBe(initial.conversationId)
+  })
+
+  it('restores empty state normally from null payload', () => {
+    const initial = state({ hydrated: false })
+    const after = chatReducer(initial, { type: 'HYDRATE', payload: null })
+    expect(after.hydrated).toBe(true)
+    expect(after.messages).toEqual([])
+  })
+
+  it('I5 keeps conversationId stable through hydration guard paths', () => {
+    const initial = state({ conversationId: 'conv_stable', hydrated: false, messages: [message('user', 'x')] })
+    const originalId = initial.conversationId
+    // HYDRATE 防覆盖路径不改变 conversationId
+    const afterHydrate = chatReducer(initial, {
+      type: 'HYDRATE',
+      payload: persistedConversation({ conversationId: 'conv_other' }),
+    })
+    expect(afterHydrate.conversationId).toBe(originalId)
+    // REHYDRATE 路径改变 conversationId（加载历史）
+    const afterRehydrate = chatReducer(initial, {
+      type: 'REHYDRATE',
+      payload: persistedConversation({ conversationId: 'conv_loaded' }),
+    })
+    expect(afterRehydrate.conversationId).toBe('conv_loaded')
+    // CLEAR_MESSAGES 路径生成新 conversationId
+    const afterClear = chatReducer(initial, { type: 'CLEAR_MESSAGES' })
+    expect(afterClear.conversationId).not.toBe(originalId)
+  })
+})
+
+describe('generateTempTitle', () => {
+  it('uses first 20 chars of first user message', async () => {
+    const { generateTempTitle } = await import('../../src/content/chat-context.js')
+    const msgs = [
+      message('user', '这是一段超过二十个字的历史消息需要被截断到二十字以内'),
+      message('assistant', '回复'),
+    ]
+    expect(generateTempTitle(msgs)).toBe('这是一段超过二十个字的历史消息需要被截断')
+  })
+
+  it('falls back to 新对话 when no user message', async () => {
+    const { generateTempTitle } = await import('../../src/content/chat-context.js')
+    expect(generateTempTitle([message('assistant', '回复')])).toBe('新对话')
+  })
+
+  it('falls back to 新对话 when first user content is empty', async () => {
+    const { generateTempTitle } = await import('../../src/content/chat-context.js')
+    expect(generateTempTitle([message('user', '   ')])).toBe('新对话')
+  })
+})

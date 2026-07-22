@@ -2,9 +2,10 @@ import {
   useReducer,
   useRef,
   useEffect,
+  useCallback,
+  useMemo,
   createContext,
   useContext,
-  useMemo,
   type RefObject,
   type Dispatch,
   type ReactNode,
@@ -26,8 +27,39 @@ import {
   type PortConnection,
   type ConnectHandlers,
 } from './port-connection.js'
+import {
+  loadLocalCache,
+  clearLocalCache,
+  saveConversation,
+  loadConversation,
+  updateTitle,
+} from '../lib/history/store.js'
+import {
+  useConversationSaver,
+  HISTORY_INDEX_DIRTY_EVENT,
+  type ConversationSaverCallbacks,
+} from '../lib/history/save-orchestrator.js'
 
 export type AgentActivity = { kind: 'thinking' | 'responding' | 'tool'; label?: string }
+
+/**
+ * 历史加载事件名：HistoryDropdown 点击某条历史时 dispatch 此 CustomEvent，
+ * ChatContext 监听后 loadConversation 并 REHYDRATE。
+ * 沿用旧仓库事件名约定，payload.detail.conversationId 携带目标会话 ID。
+ */
+export const HISTORY_LOAD_EVENT = 'biliagent:history-load'
+
+/**
+ * 标题生成纯函数：用首条 user 消息前 20 字作为临时标题（降级用）。
+ * 无 user 消息或空内容时返回"新对话"。
+ * 设计依据 3.4 §8：SW 标题请求失败时本地降级。
+ */
+export function generateTempTitle(messages: ChatMessage[]): string {
+  const firstUser = messages.find((m) => m.role === 'user')
+  const content = firstUser?.content.trim()
+  if (!content) return '新对话'
+  return content.slice(0, 20)
+}
 
 export interface TimedUnderstanding extends SlangUnderstandResult {
   receivedAt: number
@@ -454,6 +486,23 @@ export function consumeSWMessage(
     case 'pong':
       // handled by port-connection heartbeat
       break
+
+    case 'title': {
+      // SW 标题生成回推：仅当 conversationId 匹配当前会话时更新标题
+      // 标题更新失败不阻塞主流程；成功后派发索引变脏事件通知 HistoryDropdown 刷新
+      const currentConv = stateRef.current.conversationId
+      if (msg.conversationId === currentConv) {
+        void (async () => {
+          try {
+            await updateTitle(msg.conversationId, msg.title)
+            window.dispatchEvent(new Event(HISTORY_INDEX_DIRTY_EVENT))
+          } catch {
+            // 标题更新失败不阻塞聊天
+          }
+        })()
+      }
+      break
+    }
   }
 }
 
@@ -479,6 +528,8 @@ function useChatController(): UseChatResult {
     assistantPlaceholderCreated: false,
   })
   const connectionRef = useRef<PortConnection | null>(null)
+  // 标题请求去重：同一 conversationId 只请求一次 generate_title
+  const titleRequestedRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     stateRef.current = {
@@ -545,6 +596,134 @@ function useChatController(): UseChatResult {
     }
   }, [])
 
+  // 启动时从本地缓存恢复会话（HYDRATE）：防覆盖逻辑已在 reducer，
+  // 有消息/loading/streaming/hydrated 时只置 hydrated=true
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const cached = await loadLocalCache()
+        if (cancelled) return
+        dispatch({ type: 'HYDRATE', payload: cached })
+      } catch {
+        // 缓存读取失败不阻塞，置 hydrated=true 让 saver 正常工作
+        if (!cancelled) dispatch({ type: 'HYDRATE', payload: null })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // useConversationSaver 接线：所有依赖显式注入（Critic C2 / FR-004 AC5）
+  const saveCurrentConversation = useCallback(async (): Promise<void> => {
+    const current = stateRef.current
+    // 空对话不保存（无 messages）
+    if (current.messages.length === 0) return
+    // 过滤掉空 assistant 占位（无 content/reasoning/steps），避免存噪声
+    const messages = current.messages.filter(
+      (m) =>
+        m.role !== 'assistant' ||
+        m.content ||
+        m.reasoning ||
+        m.steps?.length,
+    )
+    if (messages.length === 0) return
+
+    // 临时标题：用首条 user 消息前 20 字
+    const tempTitle = generateTempTitle(messages)
+    try {
+      await saveConversation(
+        {
+          conversationId: current.conversationId,
+          messages,
+          videos: current.videos,
+          understandings: current.understandings,
+          expansions: current.expansions,
+          reranks: current.reranks,
+        },
+        tempTitle,
+      )
+      // 标题生成编排：首次保存后（消息≥2），经单 Port 请求 SW 生成标题
+      // 每个 conversationId 只请求一次，避免重复请求
+      if (
+        messages.length >= 2 &&
+        !titleRequestedRef.current.has(current.conversationId)
+      ) {
+        titleRequestedRef.current.add(current.conversationId)
+        const connection = connectionRef.current
+        if (connection && !connection.isDisconnected()) {
+          // 取前 2 条消息请求生成标题
+          connection.postMessage({
+            type: 'generate_title',
+            conversationId: current.conversationId,
+            messages: messages.slice(0, 2),
+          })
+        }
+      }
+    } catch {
+      // 保存失败不阻塞聊天
+    }
+    // 注意：saveCurrentConversation 内部不派发 dirty 事件，
+    // dirty 派发由 useConversationSaver hook 统一负责
+  }, [])
+
+  const dispatchHistoryIndexDirty = useCallback((): void => {
+    window.dispatchEvent(new Event(HISTORY_INDEX_DIRTY_EVENT))
+  }, [])
+
+  const saverCallbacks: ConversationSaverCallbacks = useMemo(
+    () => ({ saveCurrentConversation, dispatchHistoryIndexDirty }),
+    [saveCurrentConversation, dispatchHistoryIndexDirty],
+  )
+
+  useConversationSaver({
+    state,
+    dispatch,
+    hydrated: state.hydrated,
+    stateRef,
+    callbacks: saverCallbacks,
+  })
+
+  // 监听历史加载事件：HistoryDropdown 点击加载 -> loadConversation -> REHYDRATE
+  useEffect(() => {
+    const onLoadHistory = (event: Event): void => {
+      const customEvent = event as CustomEvent<{ conversationId: string }>
+      const conversationId = customEvent.detail?.conversationId
+      if (!conversationId) return
+      void (async () => {
+        try {
+          const data = await loadConversation(conversationId)
+          if (!data) return
+          dispatch({
+            type: 'REHYDRATE',
+            payload: {
+              version: 1,
+              conversationId: data.id,
+              messages: data.messages,
+              videos: data.videos,
+              understandings: data.understandings,
+              expansions: data.expansions,
+              reranks: data.reranks,
+              updatedAt: data.lastActiveAt,
+            },
+          })
+        } catch {
+          // 加载失败不阻塞
+        }
+      })()
+    }
+    window.addEventListener(HISTORY_LOAD_EVENT, onLoadHistory)
+    return () => {
+      window.removeEventListener(HISTORY_LOAD_EVENT, onLoadHistory)
+    }
+  }, [])
+
+  // 标题生成的超时降级：SW 若完全不响应（既无 title 也无 error），
+  // CS 侧不做额外超时降级，因为 tempTitle 已落盘，标题为非关键功能，
+  // 用户可双击重命名。SW 返回 error 时由 consumeSWMessage 的 title 分支已知
+  // （error 走通用 error 分支，不覆盖 tempTitle）。
+
   const send = (text: string): void => {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -597,6 +776,8 @@ function useChatController(): UseChatResult {
   }
 
   const clearChat = (): void => {
+    // CLEAR_MESSAGES 时清空本地缓存（reducer 无法做副作用，在此动作 creator 里做）
+    void clearLocalCache()
     dispatch({ type: 'CLEAR_MESSAGES' })
   }
 

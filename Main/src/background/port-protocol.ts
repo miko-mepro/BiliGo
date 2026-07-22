@@ -12,11 +12,13 @@ export type SWMessage =
   | { type: 'done' }
   | { type: 'error'; message: string; code?: string }
   | { type: 'pong' }
+  | { type: 'title'; conversationId: string; title: string }
 
 export type CSMessage =
   | { type: 'chat'; messages: ChatMessage[]; conversationId: string }
   | { type: 'stop' }
   | { type: 'ping' }
+  | { type: 'generate_title'; conversationId: string; messages: ChatMessage[] }
 
 export function isSWMessage(value: unknown): value is SWMessage {
   if (!value || typeof value !== 'object') return false
@@ -47,6 +49,10 @@ export function isSWMessage(value: unknown): value is SWMessage {
     case 'error':
       return typeof record.message === 'string'
         && (record.code === undefined || typeof record.code === 'string')
+    case 'title':
+      // 标题回推消息：conversationId 非空、title 为字符串
+      return typeof record.conversationId === 'string'
+        && typeof record.title === 'string'
     default:
       return false
   }
@@ -62,6 +68,11 @@ export function isCSMessage(value: unknown): value is CSMessage {
       return Array.isArray(record.messages)
         && typeof record.conversationId === 'string'
         && record.conversationId.length > 0
+    case 'generate_title':
+      // 标题生成请求：conversationId 非空、messages 为数组
+      return typeof record.conversationId === 'string'
+        && record.conversationId.length > 0
+        && Array.isArray(record.messages)
     case 'stop':
     case 'ping':
       return true

@@ -2,12 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const aiMocks = vi.hoisted(() => ({
   streamText: vi.fn(),
+  generateText: vi.fn(),
   isStepCount: vi.fn(),
   tool: vi.fn((opts) => ({ ...opts, __aiTool: true })),
 }))
 
 vi.mock('ai', () => ({
   streamText: aiMocks.streamText,
+  generateText: aiMocks.generateText,
   isStepCount: aiMocks.isStepCount,
   tool: aiMocks.tool,
 }))
@@ -72,6 +74,7 @@ vi.mock('../../src/tools/analyze-covers.js', () => ({
 
 import {
   handleChatMessage,
+  handleGenerateTitle,
   handlePing,
   handleStop,
   type PortSession,
@@ -745,5 +748,80 @@ describe('tool auxiliary messages', () => {
     expect(toolMocks.WorkingMemoryStore.create).toHaveBeenCalledTimes(1)
     expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+})
+
+describe('generate_title', () => {
+  it('posts title (<=20 chars) on success', async () => {
+    setupValidProvider()
+    aiMocks.generateText.mockResolvedValue({ text: '鬼畜视频搜索' })
+    const { port, posted } = createPort()
+    const session = createSession()
+    await handleGenerateTitle(port, session, {
+      type: 'generate_title',
+      conversationId: 'conv_t1',
+      messages: [
+        { role: 'user', content: '找点鬼畜', timestamp: 1 },
+        { role: 'assistant', content: '好的', timestamp: 2 },
+      ] as any,
+    })
+    expect(aiMocks.generateText).toHaveBeenCalledTimes(1)
+    // 校验 10s 超时
+    const callOpts = aiMocks.generateText.mock.calls[0][0]
+    expect(callOpts.abortSignal).toBeDefined()
+    expect(posted).toContainEqual({
+      type: 'title',
+      conversationId: 'conv_t1',
+      title: '鬼畜视频搜索',
+    })
+  })
+
+  it('truncates title to 20 chars', async () => {
+    setupValidProvider()
+    const longTitle = '这是一个非常非常长的标题应该被截断到二十个字以内的中文对话标题'
+    aiMocks.generateText.mockResolvedValue({ text: longTitle })
+    const { port, posted } = createPort()
+    const session = createSession()
+    await handleGenerateTitle(port, session, {
+      type: 'generate_title',
+      conversationId: 'conv_t2',
+      messages: [{ role: 'user', content: 'x', timestamp: 1 }] as any,
+    })
+    const titleMsg = posted.find((m) => m.type === 'title') as any
+    expect(titleMsg).toBeDefined()
+    expect(titleMsg.title.length).toBeLessThanOrEqual(20)
+    expect(titleMsg.title).toBe(longTitle.slice(0, 20))
+  })
+
+  it('posts error when no provider configured', async () => {
+    settingsMocks.readBiliAgentSettings.mockResolvedValue({
+      providers: [],
+      activeProviderId: null,
+      themeMode: 'auto',
+    })
+    const { port, posted } = createPort()
+    const session = createSession()
+    await handleGenerateTitle(port, session, {
+      type: 'generate_title',
+      conversationId: 'conv_t3',
+      messages: [{ role: 'user', content: 'x', timestamp: 1 }] as any,
+    })
+    expect(aiMocks.generateText).not.toHaveBeenCalled()
+    expect(posted.some((m) => m.type === 'error')).toBe(true)
+    expect(posted.some((m) => m.type === 'title')).toBe(false)
+  })
+
+  it('posts error when generateText throws', async () => {
+    setupValidProvider()
+    aiMocks.generateText.mockRejectedValue(new Error('timeout'))
+    const { port, posted } = createPort()
+    const session = createSession()
+    await handleGenerateTitle(port, session, {
+      type: 'generate_title',
+      conversationId: 'conv_t4',
+      messages: [{ role: 'user', content: 'x', timestamp: 1 }] as any,
+    })
+    expect(posted.some((m) => m.type === 'error')).toBe(true)
+    expect(posted.some((m) => m.type === 'title')).toBe(false)
   })
 })

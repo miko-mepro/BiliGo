@@ -1728,6 +1728,53 @@ const css = `
     color: #999;
     font-size: 13px;
   }
+
+  /* 历史搜索框 */
+  .bili-agent-history-search {
+    width: calc(100% - 24px);
+    margin: 8px 12px;
+    box-sizing: border-box;
+    height: 30px;
+    border: 1px solid #E5E9EF;
+    border-radius: 15px;
+    background-color: rgba(255, 255, 255, 0.9);
+    color: #18191C;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 0 14px;
+    outline: none;
+    transition: all 0.2s ease;
+  }
+
+  .bili-agent-history-search:focus {
+    border-color: #FB7299;
+    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+  }
+
+  .bili-agent-history-search::placeholder {
+    color: #9499A0;
+  }
+
+  /* 历史清空全部按钮 */
+  .bili-agent-history-clear-all {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 8px 12px;
+    padding: 8px 0;
+    border: none;
+    border-radius: 8px;
+    background-color: transparent;
+    color: #9499A0;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .bili-agent-history-clear-all:hover {
+    color: #FF6B81;
+    background-color: rgba(255, 107, 129, 0.06);
+  }
 `;
 
 export const sheet = new CSSStyleSheet();
