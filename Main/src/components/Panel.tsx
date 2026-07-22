@@ -299,6 +299,28 @@ export function Panel({
     setIsHistoryOpen((prev) => !prev);
   }, []);
 
+  // 外部点击关闭历史下拉：监听 document pointerdown，若点击落在
+  // heading / history-dropdown / data-no-drag 区域之外则收起下拉
+  useEffect(() => {
+    if (!isHistoryOpen || isSettingsOpen) return;
+
+    const handleOutsideClick = (e: PointerEvent) => {
+      const path = e.composedPath();
+      const clickedInside = path.some((node) =>
+        node instanceof HTMLElement &&
+        (node.classList?.contains('bili-agent-panel__heading') ||
+         node.classList?.contains('bili-agent-history-dropdown') ||
+         node.hasAttribute('data-no-drag'))
+      );
+      if (!clickedInside) {
+        setIsHistoryOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handleOutsideClick);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick);
+  }, [isHistoryOpen, isSettingsOpen]);
+
   // 修复 #1：新建对话只保留一个事件源——按钮派发一次事件（供 PanelChatBody 清空会话），
   // 并直接调用 onNewChat 通知外部；监听器侧不再回调外部，避免"派发→监听→再派发"的同步无限递归
   const handleNewChat = useCallback(() => {
@@ -340,38 +362,55 @@ export function Panel({
         onPointerDown={handleHeaderPointerDown}
         style={{ cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}
       >
-        <div className="bili-agent-panel__heading" data-no-drag>
-          <h2 className="bili-agent-panel__title">BiliAgent</h2>
-          {isSettingsOpen && <span className="bili-agent-panel__badge">Settings</span>}
-          {/* P4: 历史下拉挂载点--点击 ☰ 展开 HistoryDropdown */}
-          {!isSettingsOpen && (
-            <div style={{ position: 'relative', display: 'inline-flex' }} data-no-drag>
-              <button
-                className={`bili-agent-panel__history-toggle${isHistoryOpen ? ' bili-agent-panel__history-toggle--open' : ''}`}
-                type="button"
-                aria-label="历史记录"
-                aria-expanded={isHistoryOpen}
-                title="历史记录"
-                onClick={toggleHistory}
-                data-no-drag
+        <div 
+          className="bili-agent-panel__heading" 
+          data-no-drag
+          role="button"
+          tabIndex={0}
+          aria-label={isSettingsOpen ? 'BiliGo' : (isHistoryOpen ? '收起历史记录' : '展开历史记录')}
+          aria-expanded={!isSettingsOpen ? isHistoryOpen : undefined}
+          onClick={!isSettingsOpen ? toggleHistory : undefined}
+          onKeyDown={(e) => {
+            if (!isSettingsOpen && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault();
+              toggleHistory();
+            }
+          }}
+        >
+          <h2 className="bili-agent-panel__title">
+            {/* 白色 BiliGo SVG 文字标题，currentColor 继承文字色 */}
+            <svg 
+              width="80" 
+              height="20" 
+              viewBox="0 0 80 20" 
+              fill="none" 
+              xmlns="http://www.w3.org/2000/svg"
+              aria-label="BiliGo"
+            >
+              <text 
+                x="0" 
+                y="16" 
+                fill="currentColor" 
+                fontFamily="system-ui, -apple-system, sans-serif" 
+                fontSize="18" 
+                fontWeight="700" 
+                fontStyle="italic"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <HistoryDropdown
-                isOpen={isHistoryOpen}
-                getIndex={getHistoryIndex}
-                onLoad={async (id) => {
-                  // 加载历史：派发 HISTORY_LOAD_EVENT 通知 ChatContext REHYDRATE，并收起下拉
-                  window.dispatchEvent(new CustomEvent('biliagent:history-load', { detail: { conversationId: id } }))
-                  setIsHistoryOpen(false)
-                }}
-                onDelete={async (id) => { await deleteConversation(id) }}
-                onRename={async (id, newTitle) => { await updateTitle(id, newTitle) }}
-                onClearAll={async () => { await clearAllHistory() }}
-              />
-            </div>
+                BiliGo
+              </text>
+            </svg>
+          </h2>
+          {isSettingsOpen && <span className="bili-agent-panel__badge">Settings</span>}
+          {/* P4: 历史下拉挂载点--点击 heading 切换展开；设置页隐藏 chevron */}
+          {!isSettingsOpen && (
+            <span
+              className={`bili-agent-panel__history-toggle${isHistoryOpen ? ' bili-agent-panel__history-toggle--open' : ''}`}
+              aria-hidden="true"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </span>
           )}
         </div>
         <button
@@ -428,6 +467,21 @@ export function Panel({
             <path d="m6 6 12 12" />
           </svg>
         </button>
+        {/* P4: HistoryDropdown 移到 header 末尾，与 heading 同级，避免内层包装层干扰布局 */}
+        {!isSettingsOpen && (
+          <HistoryDropdown
+            isOpen={isHistoryOpen}
+            getIndex={getHistoryIndex}
+            onLoad={async (id) => {
+              // 加载历史：派发 HISTORY_LOAD_EVENT 通知 ChatContext REHYDRATE，并收起下拉
+              window.dispatchEvent(new CustomEvent('biliagent:history-load', { detail: { conversationId: id } }))
+              setIsHistoryOpen(false)
+            }}
+            onDelete={async (id) => { await deleteConversation(id) }}
+            onRename={async (id, newTitle) => { await updateTitle(id, newTitle) }}
+            onClearAll={async () => { await clearAllHistory() }}
+          />
+        )}
       </div>
 
       {isSettingsOpen ? (
@@ -491,7 +545,7 @@ export function Panel({
       })}
 
       <div className={`bili-agent-panel__footer${isSettingsOpen ? ' bili-agent-panel__footer--visible' : ''}`}>
-        BiliAgent v0.0.1
+        BiliGo v0.0.1
       </div>
     </aside>
   );
