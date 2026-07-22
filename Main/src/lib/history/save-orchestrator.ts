@@ -257,7 +257,7 @@ export function useConversationSaver(
   //   AC1: state.isLoading 由 true->false 转换且 hasAiActivity=true 时调用 saveCurrentConversation
   //   AC2: 初始化时 isLoading=false 不误触发（wasLoadingRef 初值 false）
   //   AC3: hydrated=false 期间不触发保存
-  //   AC4: 保存后派发 HISTORY_INDEX_DIRTY_EVENT（saveCurrentConversation 内部已派发）
+  //   AC4: 保存后由本 hook 显式派发 HISTORY_INDEX_DIRTY_EVENT（saveCurrentConversation 回调自身不派发）
   //   AC5: 对话立刻被新建/切走时由 saveCurrentConversation 内部 conversationId 守卫处理
   const wasLoadingRef = useRef<boolean>(false)
   useEffect(() => {

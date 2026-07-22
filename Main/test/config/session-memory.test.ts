@@ -124,4 +124,36 @@ describe('SessionMemory', () => {
     })
     expect(result).toBe(false)
   })
+
+  it('rejects write when UTF-8 byte length exceeds 100KB even if JS string length is under 100KB', async () => {
+    // 中文字符：每个占 1 个 UTF-16 码元（即 string.length=1）但 3 个 UTF-8 字节。
+    // 旧实现用 string.length 判定，中文内容可绕过 100KB 上限实际写入 ~300KB，超出 chrome.storage.session 配额。
+    // 这里构造 35000 个中文字：JS length=35000（远小于 102400），但 UTF-8 字节=105000（大于 102400），
+    // 必须被拒绝且不写入 storage。
+    const chineseChar = '字'
+    const largeString = chineseChar.repeat(35000)
+    // 前置断言：JS string.length 未超限（证明旧实现会漏判）
+    expect(largeString.length).toBeLessThan(100 * 1024)
+    // 前置断言：UTF-8 字节超限
+    expect(new TextEncoder().encode(largeString).length).toBeGreaterThan(
+      100 * 1024,
+    )
+
+    const expansions = Array.from({ length: 1 }, () => ({
+      keywords: [largeString],
+      tags: [largeString],
+      categories: [largeString],
+      rationale: largeString,
+    }))
+
+    const result = await updateSessionMemory('conv-2', {
+      recentExpansions: expansions,
+    })
+    // 必须拒绝写入
+    expect(result).toBe(false)
+
+    // 确认未写入 storage：getSessionMemory 应返回空骨架
+    const retrieved = await getSessionMemory('conv-2')
+    expect(retrieved.recentExpansions).toHaveLength(0)
+  })
 })

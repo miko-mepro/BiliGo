@@ -5,12 +5,12 @@
 // 约束（逐字契约）：
 //   - 存 chrome.storage.session，key 前缀 'bili-agent-memory:'
 //   - LRU 上限 20 条（recentUnderstandings / recentExpansions 各自截断到最后 20 条）
-//   - 序列化后超过 100KB 返回 false（拒绝写入）
+//   - 序列化为 UTF-8 字节后超过 100KB 返回 false（拒绝写入）
 import type { SessionMemory } from '../lib/shared-types/index.js'
 
 /** chrome.storage.session 的 key 前缀 */
 const STORAGE_PREFIX = 'bili-agent-memory:'
-/** 序列化后最大字节数（100KB），超限拒绝写入 */
+/** 序列化为 UTF-8 后最大字节数（100KB），超限拒绝写入 */
 const MAX_MEMORY_SIZE = 100 * 1024
 /** 单个 recent 列表的 LRU 上限 */
 const MAX_RECENT_ITEMS = 20
@@ -43,7 +43,7 @@ export async function getSessionMemory(
 /**
  * 更新指定会话的记忆（合并 patch，强制覆盖 conversationId）。
  * - recentUnderstandings / recentExpansions 超过 20 条时截断到最后 20 条（LRU）
- * - 序列化后超过 100KB 时返回 false（拒绝写入），调用方可降级处理
+ * - 序列化为 UTF-8 字节后超过 100KB 时返回 false（拒绝写入），调用方可降级处理
  * - 成功写入返回 true
  */
 export async function updateSessionMemory(
@@ -69,9 +69,12 @@ export async function updateSessionMemory(
     updated.recentExpansions = updated.recentExpansions.slice(-MAX_RECENT_ITEMS)
   }
 
-  // 序列化后体积校验：超过 100KB 拒绝写入
+  // 序列化后体积校验：按 UTF-8 真实字节数判定，超过 100KB 拒绝写入
+  // 注意：JSON.stringify(...).length 取的是 UTF-16 码元数，中文单字占 1 码元却占 3 字节，
+  // 会导致实际写入可达 ~300KB 超出 chrome.storage.session 配额，故改用 TextEncoder 取真实字节。
   const serialized = JSON.stringify(updated)
-  if (serialized.length > MAX_MEMORY_SIZE) {
+  const byteLength = new TextEncoder().encode(serialized).length
+  if (byteLength > MAX_MEMORY_SIZE) {
     return false
   }
 
