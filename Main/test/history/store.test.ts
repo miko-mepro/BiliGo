@@ -317,6 +317,140 @@ describe('saveConversation', () => {
   });
 });
 
+// 回归：已最终化（titleFinal===true）的 AI 标题在重复 saveConversation 时不应被 tempTitle 覆盖。
+// 复现路径：第1轮 save -> generate_title -> updateTitle(titleFinal=true) ->
+// 第2轮 isLoading 结束后再 save -> 旧实现会用 tempTitle 覆盖 AI 标题并把 titleFinal 重置为 false。
+describe('saveConversation: preserve finalized AI title on re-save', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('keeps AI title and titleFinal=true when re-saving after updateTitle', async () => {
+    const store = createBackingStore();
+    const t1 = 1000;
+    const t2 = 2000;
+    const t3 = 3000;
+    vi.setSystemTime(t1);
+
+    // 1. 首次保存：titleFinal=false，title=tempTitle
+    const messages1 = [makeMessage({ content: 'first' })];
+    const first = await saveConversation(
+      {
+        conversationId: 'c1',
+        messages: messages1,
+        videos: [],
+        understandings: [],
+        expansions: [],
+        reranks: [],
+      },
+      'Temp Title',
+    );
+    expect(first.title).toBe('Temp Title');
+    expect(first.titleFinal).toBe(false);
+
+    // 2. updateTitle 置 AI 标题并标记 titleFinal=true
+    const aiTitle = 'AI Generated Title';
+    await updateTitle('c1', aiTitle);
+    const indexAfterTitle = store[INDEX_KEY] as ConversationRecord[];
+    expect(indexAfterTitle[0].title).toBe(aiTitle);
+    expect(indexAfterTitle[0].titleFinal).toBe(true);
+
+    // 3. 再次 saveConversation：不同 tempTitle、消息变多
+    vi.setSystemTime(t3);
+    const messages2 = [
+      makeMessage({ content: 'first' }),
+      makeMessage({ content: 'second', role: 'assistant' }),
+      makeMessage({ content: 'third' }),
+    ];
+    const reSaved = await saveConversation(
+      {
+        conversationId: 'c1',
+        messages: messages2,
+        videos: [],
+        understandings: [],
+        expansions: [],
+        reranks: [],
+        createdAt: t2,
+      },
+      'Different Temp Title',
+    );
+
+    // 4. 断言：AI 标题保留、titleFinal 仍 true、messageCount/lastActiveAt 已更新
+    expect(reSaved.title).toBe(aiTitle);
+    expect(reSaved.titleFinal).toBe(true);
+    expect(reSaved.messageCount).toBe(3);
+    expect(reSaved.lastActiveAt).toBe(t3);
+    // createdAt 保留首次值（t1），入参 createdAt=t2 被忽略
+    expect(reSaved.createdAt).toBe(t1);
+
+    // 索引中同样保留 AI 标题与 titleFinal
+    const finalIndex = store[INDEX_KEY] as ConversationRecord[];
+    expect(finalIndex).toHaveLength(1);
+    expect(finalIndex[0].title).toBe(aiTitle);
+    expect(finalIndex[0].titleFinal).toBe(true);
+    expect(finalIndex[0].messageCount).toBe(3);
+    expect(finalIndex[0].lastActiveAt).toBe(t3);
+  });
+
+  it('still overwrites title with tempTitle when existing titleFinal===false', async () => {
+    const store = createBackingStore();
+    const t1 = 1000;
+    const t2 = 2000;
+    vi.setSystemTime(t1);
+
+    // 首次保存
+    await saveConversation(
+      {
+        conversationId: 'c1',
+        messages: [makeMessage({ content: 'first' })],
+        videos: [],
+        understandings: [],
+        expansions: [],
+        reranks: [],
+      },
+      'First Title',
+    );
+
+    // 再次保存：titleFinal 仍为 false，应沿用 tempTitle 覆盖逻辑
+    vi.setSystemTime(t2);
+    const reSaved = await saveConversation(
+      {
+        conversationId: 'c1',
+        messages: [
+          makeMessage({ content: 'first' }),
+          makeMessage({ content: 'second', role: 'assistant' }),
+        ],
+        videos: [],
+        understandings: [],
+        expansions: [],
+        reranks: [],
+      },
+      'Second Title',
+    );
+
+    expect(reSaved.title).toBe('Second Title');
+    expect(reSaved.titleFinal).toBe(false);
+    expect(reSaved.messageCount).toBe(2);
+  });
+
+  it('new conversation (no existing record) uses tempTitle with titleFinal=false', async () => {
+    createBackingStore();
+    const record = await saveConversation(
+      {
+        conversationId: 'c-new',
+        messages: [makeMessage()],
+        videos: [],
+        understandings: [],
+        expansions: [],
+        reranks: [],
+      },
+      'Brand New',
+    );
+    expect(record.title).toBe('Brand New');
+    expect(record.titleFinal).toBe(false);
+  });
+});
+
 describe('loadConversation', () => {
   beforeEach(() => {
     vi.clearAllMocks();

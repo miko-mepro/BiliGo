@@ -89,10 +89,15 @@ export async function saveConversation(
   const existingCreatedAt = existingRecord?.createdAt;
   const filtered = index.filter((r) => r.id !== data.conversationId);
 
+  // 标题保留策略：当已有记录且 titleFinal===true（AI 标题已最终生成）时，
+  // 保留原 title 与 titleFinal，避免后续 saveConversation（如 isLoading 结束后重存）
+  // 用 tempTitle 覆盖已生成的 AI 标题并把 titleFinal 重置为 false。
+  // 新建记录或 titleFinal 仍为 false 时，沿用 tempTitle 占位逻辑不变。
+  const titleAlreadyFinal = existingRecord?.titleFinal === true;
   const newRecord: ConversationRecord = {
     id: data.conversationId,
-    title: tempTitle,
-    titleFinal: false,
+    title: titleAlreadyFinal && existingRecord ? existingRecord.title : tempTitle,
+    titleFinal: titleAlreadyFinal,
     createdAt: existingCreatedAt ?? data.createdAt ?? now,
     lastActiveAt: now,
     messageCount: data.messages.length,
