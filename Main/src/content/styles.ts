@@ -137,7 +137,7 @@ const css = `
   .bili-agent-panel__heading {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
     min-width: 0;
     flex: 0 0 auto;
     width: max-content;
@@ -150,7 +150,9 @@ const css = `
     font-size: 18px;
     font-weight: 600;
     color: #FFFFFF;
-    line-height: 1.4;
+    display: inline-flex;
+    align-items: center;
+    line-height: 0;
   }
 
   .bili-agent-panel__badge {
@@ -189,10 +191,6 @@ const css = `
     background-color: rgba(255, 255, 255, 0.25);
     border-color: rgba(255, 255, 255, 0.5);
     transform: translateY(-1px);
-  }
-
-  .bili-agent-panel__settings-button {
-    margin-right: 8px;
   }
 
   .bili-agent-panel__settings-button--active {
@@ -1569,7 +1567,6 @@ const css = `
     flex-shrink: 0;
     backdrop-filter: blur(10px);
     transition: all 0.25s ease;
-    margin-right: 8px;
   }
 
   .bili-agent-panel__new-chat-button:hover {

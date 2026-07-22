@@ -380,19 +380,19 @@ export function Panel({
           <h2 className="bili-agent-panel__title">
             {/* 白色 BiliGo SVG 文字标题，currentColor 继承文字色 */}
             <svg 
-              width="100" 
-              height="25" 
-              viewBox="0 0 100 25" 
+              width="90" 
+              height="30" 
+              viewBox="0 0 90 30" 
               fill="none" 
               xmlns="http://www.w3.org/2000/svg"
               aria-label="BiliGo"
             >
               <text 
                 x="0" 
-                y="20" 
+                y="24" 
                 fill="currentColor" 
                 fontFamily="system-ui, -apple-system, sans-serif" 
-                fontSize="22" 
+                fontSize="28" 
                 fontWeight="700" 
                 fontStyle="italic"
               >
