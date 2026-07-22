@@ -139,7 +139,10 @@ const css = `
     align-items: center;
     gap: 10px;
     min-width: 0;
-    flex: 1;
+    flex: 0 0 auto;
+    width: max-content;
+    max-width: 50%;
+    cursor: pointer;
   }
 
   .bili-agent-panel__title {
@@ -1585,13 +1588,21 @@ const css = `
     justify-content: center;
     transition: transform 0.2s ease;
     flex-shrink: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    appearance: none;
   }
 
   .bili-agent-panel__history-toggle:hover {
     opacity: 0.85;
   }
 
-  .bili-agent-panel__history-toggle--open {
+  .bili-agent-panel__history-toggle svg {
+    transition: transform 0.2s ease;
+  }
+
+  .bili-agent-panel__history-toggle--open svg {
     transform: rotate(180deg);
   }
 
