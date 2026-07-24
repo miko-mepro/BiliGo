@@ -491,6 +491,67 @@ export async function handleGenerateTitle(
   }
 }
 
+/**
+ * 处理 test_connection 请求：用消息携带的待测 provider 配置创建临时 model，
+ * 执行 generateText("hi") 验证连通性，10s 超时。
+ *
+ * 设计依据 3.2 §3.5 + 4.5 SA-12 TestConnectionButton 硬性契约：
+ * - SW 用待测配置创建临时 model（不读取 settings，直接用 msg.provider）
+ * - 执行 generateText({ model, messages:[{role:'user',content:'hi'}] })
+ * - 10s 超时（AbortSignal.timeout，与 handleGenerateTitle 一致）
+ * - 成功回 {type:'connection_result',ok:true}
+ * - 失败回 {type:'connection_result',ok:false,error:friendlyMessage(code,message)}
+ *
+ * 与 handleGenerateTitle 的区别：
+ * - 不读取 settings/resolveActiveProvider，直接用 msg.provider
+ * - 回复 connection_result 而非 title/error
+ * - 不截断文本，不关心返回内容，只验证连通性
+ */
+export async function handleTestConnection(
+  port: chrome.runtime.Port,
+  session: PortState,
+  msg: Extract<CSMessage, { type: 'test_connection' }>,
+): Promise<void> {
+  const config = msg.provider
+  // 校验待测 provider 配置（ollama 允许空 apiKey）
+  const validation = validateProviderConfig(config)
+
+  // 校验失败：provider 配置本身不合法（如非 ollama 但 apiKey 为空）
+  if (!validation.valid) {
+    postToPort(port, session, {
+      type: 'connection_result',
+      ok: false,
+      error: validation.errors.join('；'),
+    })
+    return
+  }
+
+  // 用待测配置创建临时 model（不读取 settings，直接用 msg.provider）
+  const model: LanguageModel = createModel(config)
+
+  try {
+    // 执行一次性 generateText 验证连通性，10s 超时
+    await generateText({
+      model,
+      messages: [{ role: 'user', content: 'hi' }],
+      abortSignal: AbortSignal.timeout(10_000),
+    })
+    if (session.disconnected) return
+    // 连通性验证成功，不关心返回文本
+    postToPort(port, session, { type: 'connection_result', ok: true })
+  } catch (err) {
+    if (session.disconnected) return
+    // 超时/abort/网络错误/鉴权失败等均回 ok:false + 友好错误信息
+    const message = err instanceof Error ? err.message : String(err)
+    const code = inferErrorCode(message)
+    postToPort(port, session, {
+      type: 'connection_result',
+      ok: false,
+      error: friendlyMessage(code, message),
+    })
+  }
+}
+
 export function setupPortListener(portName = 'bili-agent-chat'): void {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== portName) return
@@ -511,6 +572,9 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           break
         case 'generate_title':
           void handleGenerateTitle(port, session, msg)
+          break
+        case 'test_connection':
+          void handleTestConnection(port, session, msg)
           break
         case 'ping':
           handlePing(port, session)

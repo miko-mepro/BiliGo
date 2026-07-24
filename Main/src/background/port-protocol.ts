@@ -1,4 +1,5 @@
 import type { ChatMessage, BilibiliVideoCard } from '../lib/shared-types'
+import type { ProviderConfig } from '../lib/shared-types/provider.js'
 
 export type InsightKind = 'understanding' | 'expansion' | 'rerank' | 'clarification'
 
@@ -13,12 +14,14 @@ export type SWMessage =
   | { type: 'error'; message: string; code?: string }
   | { type: 'pong' }
   | { type: 'title'; conversationId: string; title: string }
+  | { type: 'connection_result'; ok: boolean; error?: string }
 
 export type CSMessage =
   | { type: 'chat'; messages: ChatMessage[]; conversationId: string }
   | { type: 'stop' }
   | { type: 'ping' }
   | { type: 'generate_title'; conversationId: string; messages: ChatMessage[] }
+  | { type: 'test_connection'; provider: ProviderConfig }
 
 export function isSWMessage(value: unknown): value is SWMessage {
   if (!value || typeof value !== 'object') return false
@@ -53,6 +56,10 @@ export function isSWMessage(value: unknown): value is SWMessage {
       // 标题回推消息：conversationId 非空、title 为字符串
       return typeof record.conversationId === 'string'
         && typeof record.title === 'string'
+    case 'connection_result':
+      // 连接测试结果：ok 必须是 boolean，error 可选但存在时必须是 string
+      return typeof record.ok === 'boolean'
+        && (record.error === undefined || typeof record.error === 'string')
     default:
       return false
   }
@@ -76,6 +83,10 @@ export function isCSMessage(value: unknown): value is CSMessage {
     case 'stop':
     case 'ping':
       return true
+    case 'test_connection':
+      // 连接测试请求：provider 必须是对象（完整结构校验由 createModel 负责）
+      return record.provider !== null
+        && typeof record.provider === 'object'
     default:
       return false
   }

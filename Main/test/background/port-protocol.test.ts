@@ -7,7 +7,7 @@ import {
 } from '../../src/background/port-protocol.js'
 
 describe('isSWMessage', () => {
-  it('accepts all nine valid SW message formats', () => {
+  it('accepts all eleven valid SW message formats', () => {
     const cases = [
       { type: 'chunk', delta: '你好' },
       { type: 'reasoning', delta: '分析中' },
@@ -18,6 +18,8 @@ describe('isSWMessage', () => {
       { type: 'done' },
       { type: 'error', message: '错误', code: '401' },
       { type: 'pong' },
+      { type: 'connection_result', ok: true },
+      { type: 'connection_result', ok: false, error: '连接失败' },
     ]
     for (const value of cases) {
       expect(isSWMessage(value)).toBe(true)
@@ -46,6 +48,13 @@ describe('isSWMessage', () => {
     expect(isSWMessage({ type: 'error', message: 'x', code: 123 })).toBe(false)
   })
 
+  it('requires boolean ok and optional string error for connection_result', () => {
+    expect(isSWMessage({ type: 'connection_result', ok: 'true' })).toBe(false)
+    expect(isSWMessage({ type: 'connection_result', ok: 1 })).toBe(false)
+    expect(isSWMessage({ type: 'connection_result', ok: true, error: 123 })).toBe(false)
+    expect(isSWMessage({ type: 'connection_result' })).toBe(false)
+  })
+
   it.each([
     ['null', null],
     ['undefined', undefined],
@@ -71,6 +80,22 @@ describe('isCSMessage', () => {
     ['missing conversationId', { type: 'chat', messages: [] }],
     ['empty conversationId', { type: 'chat', messages: [], conversationId: '' }],
   ])('rejects malformed chat messages: %s', (_label, value) => {
+    expect(isCSMessage(value)).toBe(false)
+  })
+
+  it('accepts test_connection with a provider object', () => {
+    expect(isCSMessage({
+      type: 'test_connection',
+      provider: { id: 'deepseek', name: 'DeepSeek', format: 'openai', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'sk-xxx', model: 'deepseek-chat', isBuiltIn: true, isCustom: false }
+    })).toBe(true)
+  })
+
+  it.each([
+    ['missing provider', { type: 'test_connection' }],
+    ['null provider', { type: 'test_connection', provider: null }],
+    ['string provider', { type: 'test_connection', provider: 'deepseek' }],
+    ['array provider', { type: 'test_connection', provider: [] }],
+  ])('rejects malformed test_connection messages: %s', (_label, value) => {
     expect(isCSMessage(value)).toBe(false)
   })
 })
