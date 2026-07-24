@@ -282,4 +282,54 @@ describe('migrateSettings', () => {
 
     expect(result.providers[0].format).toBe('openai')
   })
+
+  // 回归测试：null/undefined 数组元素不应崩溃（reviewer gate 反馈）
+  it('null/undefined 数组元素不崩溃，回退为默认自定义 provider', () => {
+    const input = {
+      providers: [
+        null,
+        undefined,
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          [providerSecretKeyProp]: 'sk-xxx',
+          model: 'gpt-4',
+          format: 'openai',
+          baseUrl: 'https://api.openai.com/v1',
+          isBuiltIn: true,
+          isCustom: false,
+        },
+      ],
+      activeProviderId: 'openai',
+      themeMode: 'auto',
+    }
+
+    const result = migrateSettings(input)
+
+    // 不抛异常，返回 3 个 provider
+    expect(result.providers).toHaveLength(3)
+    // null/undefined 元素变为默认自定义 provider（空字段）
+    expect(result.providers[0]).toMatchObject({
+      id: '',
+      name: '',
+      format: 'openai',
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+      isBuiltIn: false,
+      isCustom: true,
+    })
+    expect(result.providers[1]).toMatchObject({
+      id: '',
+      name: '',
+      format: 'openai',
+      isBuiltIn: false,
+      isCustom: true,
+    })
+    // 正常 provider 不受影响
+    expect(result.providers[2]).toMatchObject({
+      id: 'openai',
+      apiKey: 'sk-xxx',
+    })
+  })
 })

@@ -37,6 +37,20 @@ function isBuiltInProviderId(id: string): id is BuiltInProviderId {
  * @returns 字段完整的 ProviderConfig
  */
 function normalizeProvider(p: unknown): ProviderConfig {
+  // 防御 null/undefined/原始值数组元素：回退为默认自定义 provider（空字段）
+  // 避免 provider.id 在 null 上抛 TypeError 导致面板加载崩溃
+  if (p === null || typeof p !== 'object') {
+    return {
+      id: '',
+      name: '',
+      format: 'openai',
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+      isBuiltIn: false,
+      isCustom: true,
+    }
+  }
   const provider = p as Record<string, unknown>
   // 提取 id，非字符串时回退空串
   const id = typeof provider.id === 'string' ? provider.id : ''
