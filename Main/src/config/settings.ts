@@ -1,5 +1,6 @@
 import type { ProviderConfig } from '../lib/shared-types/provider.js'
 import { BUILT_IN_PROVIDERS } from '../lib/shared-types/provider.js'
+import { migrateSettings } from './settings-migration.js'
 
 export const SETTINGS_STORAGE_KEY = 'bili-agent-settings'
 
@@ -39,8 +40,6 @@ export async function saveBiliAgentSettings(
 }
 
 export function normalizeSettings(value: unknown): BiliAgentSettings {
-  if (!value || typeof value !== 'object') {
-    return DEFAULT_SETTINGS
-  }
-  return value as BiliAgentSettings
+  // 委托给 migrateSettings 处理迁移逻辑（P5 新增）
+  return migrateSettings(value)
 }
