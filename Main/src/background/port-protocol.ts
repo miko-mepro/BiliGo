@@ -84,9 +84,10 @@ export function isCSMessage(value: unknown): value is CSMessage {
     case 'ping':
       return true
     case 'test_connection':
-      // 连接测试请求：provider 必须是对象（完整结构校验由 createModel 负责）
+      // 连接测试请求：provider 必须是纯对象（非数组，完整结构校验由 createModel 负责）
       return record.provider !== null
         && typeof record.provider === 'object'
+        && !Array.isArray(record.provider)
     default:
       return false
   }
