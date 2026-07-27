@@ -10,6 +10,10 @@ import {
 	saveBiliAgentSettings,
 	type ThemeMode,
 } from "../../config/settings.js";
+import {
+	isBuiltInProviderOrigin,
+	resolveOriginPattern,
+} from "../../config/origin-pattern.js";
 import type { ProviderConfig } from "../../lib/shared-types/provider.js";
 import { ProviderForm } from "./ProviderForm.js";
 import { ProviderList } from "./ProviderList.js";
@@ -159,6 +163,14 @@ export function SettingsPanel({
 	 * 3. 成功 -> onSaved 回调 + saved 态（2s 后回 idle）
 	 * 4. 失败 -> error 态 + 显示错误信息
 	 *
+	 * MV3 origin 授权（P5 新增）：
+	 * - 必须在 onClick 同步栈内调 chrome.permissions.request（用户手势上下文）。
+	 *   因此本函数在 await saveBiliAgentSettings 之前先同步遍历自定义 provider
+	 *   申请权限。Chrome 允许在 onClick 同步链中 await permissions.request。
+	 * - 仅对非内置域名申请（内置域名已在 host_permissions 中授权）。
+	 * - 用户拒绝 / API 异常 -> error 态 + 错误提示 "需要授权访问该域名"，
+	 *   且不调 saveBiliAgentSettings（不留半保存），不调 onSaved。
+	 *
 	 * @param e 表单提交事件
 	 */
 	const handleSave = useCallback(
@@ -166,6 +178,48 @@ export function SettingsPanel({
 			e.preventDefault();
 			setSaveStatus("saving");
 			setSaveError("");
+
+			// ---- MV3 origin 授权：必须在用户手势同步栈内完成 ----
+			// 遍历所有自定义 provider，对非内置域名申请 origin 权限。
+			// 内置 provider（isBuiltIn=true）跳过；自定义但 baseUrl 为内置域名也跳过。
+			for (const provider of providers) {
+				// 仅自定义 provider 需要申请（内置 provider 已在 host_permissions 中）
+				if (!provider.isCustom) {
+					continue;
+				}
+				// baseUrl 为空的自定义 provider 跳过，让后续 saveBiliAgentSettings 自然失败
+				const baseUrl = provider.baseUrl;
+				if (baseUrl.trim() === "") {
+					continue;
+				}
+				// 内置域名（如 api.openai.com）已在 host_permissions 中，跳过
+				if (isBuiltInProviderOrigin(baseUrl)) {
+					continue;
+				}
+				// 解析最小 origin 通配 pattern；解析失败（空串）跳过
+				const pattern = resolveOriginPattern(baseUrl);
+				if (pattern === "") {
+					continue;
+				}
+				// 在用户手势同步栈内申请权限（Chrome 允许 onClick 同步链中 await）
+				try {
+					const granted = await chrome.permissions.request({
+						origins: [pattern],
+					});
+					if (!granted) {
+						// 用户拒绝授权：渲染错误提示，不保存，不触发 onSaved
+						setSaveError("需要授权访问该域名");
+						setSaveStatus("error");
+						return;
+					}
+				} catch {
+					// Chrome API 抛异常：同样渲染错误提示，不保存
+					setSaveError("需要授权访问该域名");
+					setSaveStatus("error");
+					return;
+				}
+			}
+
 			try {
 				const next: BiliAgentSettings = {
 					providers,
