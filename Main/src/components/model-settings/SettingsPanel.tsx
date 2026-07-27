@@ -1,13 +1,18 @@
 import type React from "react";
-import { useCallback, useState, type CSSProperties, type FormEvent } from "react";
-import type { ProviderConfig } from "../../lib/shared-types/provider.js";
 import {
-	saveBiliAgentSettings,
+	type CSSProperties,
+	type FormEvent,
+	useCallback,
+	useState,
+} from "react";
+import {
 	type BiliAgentSettings,
+	saveBiliAgentSettings,
 	type ThemeMode,
 } from "../../config/settings.js";
-import { ProviderList } from "./ProviderList.js";
+import type { ProviderConfig } from "../../lib/shared-types/provider.js";
 import { ProviderForm } from "./ProviderForm.js";
+import { ProviderList } from "./ProviderList.js";
 import { TestConnectionButton } from "./TestConnectionButton.js";
 
 /**
@@ -88,7 +93,8 @@ export function SettingsPanel({
 	const [saveError, setSaveError] = useState<string>("");
 
 	// 查找当前选中的 provider 对象，供 ProviderForm 与 TestConnectionButton 使用
-	const activeProvider = providers.find((p) => p.id === activeProviderId) ?? null;
+	const activeProvider =
+		providers.find((p) => p.id === activeProviderId) ?? null;
 
 	/**
 	 * 选中某个 provider 时触发：更新 activeProviderId，并清除上次保存反馈。
@@ -139,9 +145,7 @@ export function SettingsPanel({
 	 * @param next 更新后的完整 ProviderConfig
 	 */
 	const handleProviderChange = useCallback((next: ProviderConfig) => {
-		setProviders((prev) =>
-			prev.map((p) => (p.id === next.id ? next : p)),
-		);
+		setProviders((prev) => prev.map((p) => (p.id === next.id ? next : p)));
 		setSaveStatus("idle");
 		setSaveError("");
 	}, []);
@@ -379,10 +383,7 @@ export function SettingsPanel({
 								/>
 								{/* TestConnectionButton 接收 SettingsPanel props 的 port（SA-12 经单 Port） */}
 								<div style={{ marginTop: 8 }}>
-									<TestConnectionButton
-										provider={activeProvider}
-										port={port}
-									/>
+									<TestConnectionButton provider={activeProvider} port={port} />
 								</div>
 							</div>
 						)}

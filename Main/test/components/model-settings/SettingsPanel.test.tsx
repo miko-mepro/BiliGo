@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	cleanup,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BiliAgentSettings } from "../../../src/config/settings.js";
 
@@ -58,7 +64,9 @@ const customProvider: ProviderConfig = {
 };
 
 /** 默认初始 settings 快照 */
-function makeInitialSettings(overrides: Partial<BiliAgentSettings> = {}): BiliAgentSettings {
+function makeInitialSettings(
+	overrides: Partial<BiliAgentSettings> = {},
+): BiliAgentSettings {
 	return {
 		providers: [builtInOpenai, customProvider],
 		activeProviderId: "openai",
@@ -163,7 +171,9 @@ describe("SettingsPanel", () => {
 			expect(screen.getByTestId("model-tab-content")).toBeInTheDocument();
 			expect(screen.getByTestId("provider-list")).toBeInTheDocument();
 			// 通用 Tab 内容应收起
-			expect(screen.queryByTestId("general-tab-content")).not.toBeInTheDocument();
+			expect(
+				screen.queryByTestId("general-tab-content"),
+			).not.toBeInTheDocument();
 		});
 	});
 
@@ -250,7 +260,9 @@ describe("SettingsPanel", () => {
 
 			// 无激活 provider 时不应渲染 ProviderForm 与 TestConnectionButton
 			expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
-			expect(screen.queryByTestId("test-connection-button")).not.toBeInTheDocument();
+			expect(
+				screen.queryByTestId("test-connection-button"),
+			).not.toBeInTheDocument();
 		});
 
 		it("4) TestConnectionButton 收到的 port === SettingsPanel props.port（SA-12 经单 Port 契约）", async () => {
@@ -312,7 +324,9 @@ describe("SettingsPanel", () => {
 				expect(saveBtn).toHaveTextContent("✓ 已保存");
 			});
 			// 成功提示出现
-			expect(screen.getByTestId("save-success-hint")).toHaveTextContent("已保存");
+			expect(screen.getByTestId("save-success-hint")).toHaveTextContent(
+				"已保存",
+			);
 		});
 
 		it("6) 保存失败 -> error 态 + 显示错误信息", async () => {
@@ -371,11 +385,10 @@ describe("SettingsPanel", () => {
 			fireEvent.click(screen.getByTestId("provider-dropdown-trigger"));
 			expect(screen.getAllByTestId("provider-option")).toHaveLength(1);
 
-			// 点击 + 添加自定义 provider
+			// 点击 + 添加自定义 provider（菜单仍保持展开，ProviderList 内部 isOpen 不受 onAddCustom 影响）
 			fireEvent.click(screen.getByRole("button", { name: "添加自定义提供商" }));
 
-			// 再次展开下拉，应增加 1 个自定义 provider
-			fireEvent.click(screen.getByTestId("provider-dropdown-trigger"));
+			// 菜单仍展开，应增加 1 个自定义 provider（共 2 个）
 			expect(screen.getAllByTestId("provider-option")).toHaveLength(2);
 
 			// 新建项应被自动选中：触发按钮显示空名称（因新建 name 为空），
@@ -408,9 +421,7 @@ describe("SettingsPanel", () => {
 			expect(screen.getAllByTestId("provider-option")).toHaveLength(2);
 
 			// 点击自定义 provider 的删除按钮
-			fireEvent.click(
-				screen.getByRole("button", { name: "删除 我的自定义" }),
-			);
+			fireEvent.click(screen.getByRole("button", { name: "删除 我的自定义" }));
 
 			// 再次展开下拉，应只剩 1 个 provider
 			fireEvent.click(screen.getByTestId("provider-dropdown-trigger"));
@@ -441,9 +452,7 @@ describe("SettingsPanel", () => {
 
 			// 展开下拉并删除当前激活的自定义 provider
 			fireEvent.click(screen.getByTestId("provider-dropdown-trigger"));
-			fireEvent.click(
-				screen.getByRole("button", { name: "删除 我的自定义" }),
-			);
+			fireEvent.click(screen.getByRole("button", { name: "删除 我的自定义" }));
 
 			// 删除激活项后应清空激活选择：ProviderForm 不再渲染
 			expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
