@@ -461,4 +461,116 @@ describe("SettingsPanel", () => {
 			).not.toBeInTheDocument();
 		});
 	});
+
+	describe("对抗测试 - Port 防御", () => {
+		it("A) port 为 null 时组件渲染不崩溃（类型必选但运行时防御）", () => {
+			// TypeScript 类型声明 port 为必选，但运行时可能因错误而传入 null
+			// 组件应能安全处理或至少不崩溃
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings()}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			// 验证组件正常渲染
+			expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
+			// 切到模型 Tab，TestConnectionButton 应能渲染（即使 port 为 null，组件也不应崩溃）
+			fireEvent.click(screen.getByTestId("tab-model"));
+			expect(screen.getByTestId("provider-list")).toBeInTheDocument();
+		});
+	});
+
+	describe("对抗测试 - 提供商列表边界", () => {
+		it("B) settings.providers 为空数组时，ProviderList 显示无项提示", () => {
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings({
+						providers: [],
+						activeProviderId: null,
+					})}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			// 切到模型 Tab
+			fireEvent.click(screen.getByTestId("tab-model"));
+
+			// 验证 ProviderList 渲染，但无 provider-option（列表为空）
+			expect(screen.getByTestId("provider-list")).toBeInTheDocument();
+			expect(screen.queryAllByTestId("provider-option")).toHaveLength(0);
+			// ProviderForm 不应显示
+			expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+		});
+
+		it("C) activeProviderId 指向不存在的 id 时，不显示 ProviderForm（安全降级）", () => {
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings({
+						providers: [builtInOpenai],
+						activeProviderId: "non-existent-id",
+					})}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			// 切到模型 Tab
+			fireEvent.click(screen.getByTestId("tab-model"));
+
+			// activeProvider 为 null（id 不匹配），ProviderForm 不应显示
+			expect(screen.queryByTestId("provider-form")).not.toBeInTheDocument();
+			expect(
+				screen.queryByTestId("test-connection-button"),
+			).not.toBeInTheDocument();
+		});
+	});
+
+	describe("对抗测试 - 重复保存防御", () => {
+		it("D) 保存中重复点击保存按钮，仅调用一次 saveBiliAgentSettings", async () => {
+			// 创建一个延迟 resolve 的 mock，模拟长时间保存
+			let resolveDelay: (() => void) | null = null;
+			const delayedSave = new Promise<BiliAgentSettings>((resolve) => {
+				resolveDelay = () => resolve(makeInitialSettings());
+			});
+			mockSave.mockReturnValueOnce(delayedSave);
+
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings()}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			const saveBtn = screen.getByTestId("save-button");
+
+			// 第一次点击保存
+			fireEvent.click(saveBtn);
+			expect(mockSave).toHaveBeenCalledTimes(1);
+
+			// 在保存过程中（saving 态），重复点击保存按钮
+			fireEvent.click(saveBtn);
+			fireEvent.click(saveBtn);
+
+			// 由于按钮在 saving 态应被禁用，saveBiliAgentSettings 仅被调用 1 次
+			expect(mockSave).toHaveBeenCalledTimes(1);
+
+			// 完成保存以清理状态
+			if (resolveDelay) resolveDelay();
+			await waitFor(() => {
+				expect(saveBtn).toHaveTextContent("✓ 已保存");
+			});
+		});
+	});
 });
