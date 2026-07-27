@@ -146,7 +146,12 @@ export function ProviderList({
 
 		return (
 			<li key={provider.id} role="none" data-testid="provider-option">
-				<div className={itemClassName} role="option" aria-selected={isActive}>
+				<div
+					className={itemClassName}
+					role="option"
+					tabIndex={0}
+					aria-selected={isActive}
+				>
 					{/* provider 名称按钮：点击选中该项 */}
 					<button
 						type="button"
@@ -209,7 +214,7 @@ export function ProviderList({
 					</button>
 					{/* 下拉菜单：仅展开时渲染，内置在上、分隔线、自定义在下 */}
 					{isOpen && (
-						<ul
+						<div
 							className="bili-agent-model-settings__custom-dropdown-menu"
 							role="listbox"
 							aria-label="提供商列表"
@@ -217,14 +222,10 @@ export function ProviderList({
 							{builtInProviders.map(renderItem)}
 							{/* 仅当存在自定义 provider 时渲染分隔线 */}
 							{customProviders.length > 0 && (
-								<li
-									className="bili-agent-model-settings__custom-divider"
-									role="separator"
-									aria-hidden="true"
-								/>
+								<hr className="bili-agent-model-settings__custom-divider" />
 							)}
 							{customProviders.map(renderItem)}
-						</ul>
+						</div>
 					)}
 				</div>
 				{/* "+" 添加自定义提供商按钮 */}

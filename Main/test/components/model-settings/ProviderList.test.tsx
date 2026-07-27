@@ -233,9 +233,10 @@ describe("ProviderList", () => {
 			expect(onSelectActive).toHaveBeenCalledWith("openai");
 
 			// 下拉应收起
-			expect(
-				screen.getByTestId("provider-dropdown-trigger"),
-			).toHaveAttribute("aria-expanded", "false");
+			expect(screen.getByTestId("provider-dropdown-trigger")).toHaveAttribute(
+				"aria-expanded",
+				"false",
+			);
 		});
 	});
 
@@ -266,9 +267,10 @@ describe("ProviderList", () => {
 			expect(onDelete).toHaveBeenCalledWith("custom-1");
 
 			// 下拉应收起
-			expect(
-				screen.getByTestId("provider-dropdown-trigger"),
-			).toHaveAttribute("aria-expanded", "false");
+			expect(screen.getByTestId("provider-dropdown-trigger")).toHaveAttribute(
+				"aria-expanded",
+				"false",
+			);
 		});
 
 		it("f) 内置 provider 没有删除按钮", () => {
