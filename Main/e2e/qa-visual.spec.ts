@@ -12,9 +12,9 @@
  * 设计依据：4.5 SC-4 ② + 旧仓库参照
  */
 
-import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { expect, test } from "@playwright/test";
 import {
 	openBilibiliWithMockedExtension,
 	openPanel,
@@ -44,9 +44,7 @@ async function optionalScreenshot(
 }
 
 test.describe("BiliGo QA - Visual & Interaction", () => {
-	test("toggle button visible and peeking from page edge", async ({
-		page,
-	}) => {
+	test("toggle button visible and peeking from page edge", async ({ page }) => {
 		await openBilibiliWithMockedExtension(page);
 
 		const toggle = page.locator("[data-bili-agent-toggle]");
@@ -57,7 +55,7 @@ test.describe("BiliGo QA - Visual & Interaction", () => {
 		expect(rect).not.toBeNull();
 		if (rect) {
 			// toggle 应位于视口右边缘附近
-			expect(rect.x + rect.width).toBeGreaterThan(page.viewportSize()!.width);
+			expect(rect.x + rect.width).toBeGreaterThan(page.viewportSize()?.width);
 		}
 
 		await optionalScreenshot(page, "qa-01-toggle-visible.png");
@@ -133,9 +131,7 @@ test.describe("BiliGo QA - Visual & Interaction", () => {
 		await optionalScreenshot(page, "qa-04-input-send.png");
 	});
 
-	test("settings button present and opens settings panel", async ({
-		page,
-	}) => {
+	test("settings button present and opens settings panel", async ({ page }) => {
 		await openBilibiliWithMockedExtension(page);
 		const panel = await openPanel(page);
 
@@ -192,9 +188,7 @@ test.describe("BiliGo QA - Visual & Interaction", () => {
 		await optionalScreenshot(page, "qa-07-new-chat.png");
 	});
 
-	test("outside click closes panel and restores toggle", async ({
-		page,
-	}) => {
+	test("outside click closes panel and restores toggle", async ({ page }) => {
 		await openBilibiliWithMockedExtension(page);
 		const panel = await openPanel(page);
 		await expect(panel).toBeVisible();

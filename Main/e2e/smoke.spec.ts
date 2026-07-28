@@ -14,16 +14,16 @@
  * 设计依据：4.5 SC-4 ② + 旧仓库参照
  */
 
-import { test, expect } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { expect, test } from "@playwright/test";
+import { emptySettings, type SeedSettings } from "./fixtures/chrome-mock.js";
 import {
+	backToChat,
 	openBilibiliWithMockedExtension,
 	openPanel,
 	openSettings,
-	backToChat,
 } from "./fixtures/extension-harness.js";
-import { emptySettings, type SeedSettings } from "./fixtures/chrome-mock.js";
 
 // ESM 等价 __dirname（用于截图证据输出目录）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +42,7 @@ function configuredOpenAiSettings(): SeedSettings {
 				name: "OpenAI 官方",
 				format: "openai",
 				baseUrl: "https://api.openai.com/v1",
-				apiKey: "sk-mock-openai-key",
+				apiKey: "mock-key-not-real",
 				model: "gpt-4o-mini",
 				isBuiltIn: true,
 				isCustom: false,
@@ -182,9 +182,7 @@ test.describe("BiliGo LLM provider flow (mocked)", () => {
 		const panel = await openPanel(page);
 
 		// 输入消息并发送
-		await panel
-			.locator(".bili-agent-chat-input__textarea")
-			.fill("hello");
+		await panel.locator(".bili-agent-chat-input__textarea").fill("hello");
 		await panel.locator(".bili-agent-chat-input__send").click();
 
 		// 等待错误提示出现
@@ -285,7 +283,7 @@ test.describe("BiliGo LLM provider flow (mocked)", () => {
 
 		// 填写 API Key（ProviderForm aria-label="API Key"）
 		const apiKeyInput = settingsPanel.getByLabel("API Key");
-		await apiKeyInput.fill("sk-mock-openai-key");
+		await apiKeyInput.fill("mock-key-not-real");
 
 		// 填写模型（ProviderForm aria-label="模型"）
 		// 注意：旧仓库用"默认模型 ID"标签，新仓库标签为"模型"，aria-label="模型"
@@ -305,9 +303,7 @@ test.describe("BiliGo LLM provider flow (mocked)", () => {
 			.click();
 		// 等待连接成功结果（data-testid="test-connection-result" + .--ok class）
 		await expect(
-			settingsPanel.locator(
-				".bili-agent-model-settings__test-result--ok",
-			),
+			settingsPanel.locator(".bili-agent-model-settings__test-result--ok"),
 		).toBeVisible({ timeout: 5000 });
 		expect(testConnectionHits).toBe(1);
 
@@ -321,9 +317,7 @@ test.describe("BiliGo LLM provider flow (mocked)", () => {
 		// 等待助手消息文本出现"Hello world"
 		// ChatMessage 组件：.bili-agent-message--assistant .bili-agent-message__text
 		const assistantText = panel
-			.locator(
-				".bili-agent-message--assistant .bili-agent-message__text",
-			)
+			.locator(".bili-agent-message--assistant .bili-agent-message__text")
 			.last();
 		await expect(assistantText).toContainText("Hello world", {
 			timeout: 5000,
@@ -368,9 +362,7 @@ test.describe("BiliGo LLM provider flow (mocked)", () => {
 		// title 非空（应为"请求太频繁"）
 		await expect(error.locator(".bili-agent-error__title")).not.toBeEmpty();
 		// message 非空（应为"请求太频繁，请稍后重试。"）
-		await expect(
-			error.locator(".bili-agent-error__message"),
-		).not.toBeEmpty();
+		await expect(error.locator(".bili-agent-error__message")).not.toBeEmpty();
 
 		await optionalScreenshot(page, "task-p5-e2e-429.png");
 	});
