@@ -24,13 +24,13 @@
  * 设计依据：4.5 SC-4 ② + 旧仓库参照 + Main/src/components/HistoryDropdown.tsx 选择器
  */
 
-import { expect, test } from "@playwright/test";
 import type { BrowserContext } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import type { SeedSettings } from "./fixtures/chrome-mock.js";
 import {
 	openBilibiliWithMockedExtension,
 	openPanel,
 } from "./fixtures/extension-harness.js";
-import { type SeedSettings } from "./fixtures/chrome-mock.js";
 
 /**
  * 历史索引在 chrome.storage.local 中的键名。
@@ -120,27 +120,23 @@ test.describe("BiliGo history dropdown", () => {
 		// heading 区域带 aria-label="展开历史记录"（收起态），
 		// 点击后切换为 aria-label="收起历史记录"（展开态）
 		// 参照 Panel.tsx 第 478-484 行的 aria-label 逻辑
-		const headingToggle = panel.locator(
-			'[aria-label="展开历史记录"]',
-		);
+		const headingToggle = panel.locator('[aria-label="展开历史记录"]');
 		await expect(headingToggle).toBeVisible();
 
 		// 点击 heading 展开历史下拉
 		await headingToggle.click();
 
 		// aria-label 应切换为"收起历史记录"（展开态）
-		await expect(
-			panel.locator('[aria-label="收起历史记录"]'),
-		).toBeVisible();
+		await expect(panel.locator('[aria-label="收起历史记录"]')).toBeVisible();
 
 		// 历史下拉容器应可见（HistoryDropdown.tsx 第 222 行：className="bili-agent-history-dropdown"）
 		const dropdown = panel.locator(".bili-agent-history-dropdown");
 		await expect(dropdown).toBeVisible();
 
 		// 无历史时应显示空状态提示
-		await expect(
-			dropdown.locator(".bili-agent-history-empty"),
-		).toContainText("暂无历史记录");
+		await expect(dropdown.locator(".bili-agent-history-empty")).toContainText(
+			"暂无历史记录",
+		);
 	});
 
 	test("lists seeded history records", async ({ page }) => {
@@ -253,9 +249,7 @@ test.describe("BiliGo history dropdown", () => {
 		}
 	});
 
-	test("clears all records when clear-all button clicked", async ({
-		page,
-	}) => {
+	test("clears all records when clear-all button clicked", async ({ page }) => {
 		// 播种两条历史，点击"清空全部历史"按钮后列表应为空
 		const now = Date.now();
 		const seedRecords: SeedHistoryRecord[] = [
@@ -292,9 +286,7 @@ test.describe("BiliGo history dropdown", () => {
 		// 清空全部按钮（HistoryDropdown.tsx 第 343-349 行）：
 		// className="bili-agent-history-clear-all"，文案"清空全部历史"
 		// 仅当 records.length > 0 时渲染
-		const clearAllButton = dropdown.locator(
-			".bili-agent-history-clear-all",
-		);
+		const clearAllButton = dropdown.locator(".bili-agent-history-clear-all");
 		await expect(clearAllButton).toBeVisible();
 		await expect(clearAllButton).toContainText("清空全部历史");
 		await clearAllButton.click();
@@ -303,9 +295,9 @@ test.describe("BiliGo history dropdown", () => {
 		await expect(historyItems).toHaveCount(0, { timeout: 5000 });
 
 		// 应显示空状态提示
-		await expect(
-			dropdown.locator(".bili-agent-history-empty"),
-		).toContainText("暂无历史记录");
+		await expect(dropdown.locator(".bili-agent-history-empty")).toContainText(
+			"暂无历史记录",
+		);
 
 		// 清空全部按钮在 records.length===0 时不再渲染
 		await expect(clearAllButton).toHaveCount(0);

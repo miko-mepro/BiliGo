@@ -13,13 +13,21 @@
  * 6. UI 渲染：助手消息出现、工具调用步骤出现、视频卡片出现
  *
  * Mock 策略：
- * - page.route 拦截 /chat/completions 路径，mock AI API 的 SSE 流
+ * - context.route 拦截 /chat/completions 路径，mock AI API 的 SSE 流
  *   第一段返回 tool_call 请求 bilibili_search
  *   第二段（tool_call 执行后 AI 二次请求）返回最终文本
- * - page.route 拦截 api.bilibili.com 域名，mock B站接口
+ * - context.route 拦截 api.bilibili.com 域名，mock B站接口
  *   /x/web-interface/nav 返回 wbi 密钥
  *   /x/web-interface/wbi/search/type 返回搜索结果
  * - 不依赖真实网络/API Key
+ *
+ * 网络拦截架构说明（P5-2.3 reviewer CRITICAL 修复）：
+ * AI API fetch（streamText -> createOpenAI -> fetch）与 B站 API fetch
+ * （wbi.ts -> fetch）均在扩展 Service Worker 上下文执行。
+ * page.route() 仅拦截页面级请求，无法拦截 SW 发起的请求
+ * （SW 是独立的 CDP 目标）。
+ * 改用 context.route() 在 BrowserContext 级别拦截，
+ * 覆盖 context 下所有目标（page + service worker）发起的请求。
  *
  * 设计依据：4.5 SC-4 ② + 旧仓库参照
  * 参照 Main/src/background/stream.ts 的 streamText + tool 流转
@@ -29,12 +37,13 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BrowserContext } from "@playwright/test";
 import { expect, test } from "@playwright/test";
+import type { SeedSettings } from "./fixtures/chrome-mock.js";
 import {
 	openBilibiliWithMockedExtension,
 	openPanel,
 } from "./fixtures/extension-harness.js";
-import { type SeedSettings } from "./fixtures/chrome-mock.js";
 
 // ESM 等价 __dirname（用于截图证据输出目录）
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +52,7 @@ const evidenceDir = path.resolve(__dirname, "../.sisyphus/evidence");
 
 /**
  * 构造一份已配置 OpenAI provider 的种子 settings（apiKey 为 mock 值）。
- * 发消息会走真实 fetch -> page.route 拦截，不依赖真实 API Key。
+ * 发消息会走真实 fetch -> context.route 拦截，不依赖真实 API Key。
  */
 function configuredOpenAiSettings(): SeedSettings {
 	return {
@@ -65,7 +74,7 @@ function configuredOpenAiSettings(): SeedSettings {
 }
 
 /**
- * CORS 响应头：page.route mock 需要，否则浏览器 fetch 会被 CORS 拦截。
+ * CORS 响应头：context.route mock 需要，否则浏览器 fetch 会被 CORS 拦截。
  * 与旧仓库 smoke.spec.ts corsHeaders() 对齐。
  */
 function corsHeaders(): Record<string, string> {
@@ -252,6 +261,12 @@ test.describe("BiliGo agent flow (mocked end-to-end)", () => {
 	test("user sends message, AI calls bilibili_search, videos render", async ({
 		page,
 	}) => {
+		// 获取 BrowserContext：context.route 在 context 级别拦截请求，
+		// 覆盖 page 与扩展 service worker 两类 CDP 目标发起的 fetch。
+		// 必须在 openBilibiliWithMockedExtension 之前注册路由，
+		// 否则 SW 启动时发起的请求会绕过 mock。
+		const context: BrowserContext = page.context();
+
 		// 记录 AI API 请求次数（tool_call 一轮 + 文本回复一轮 = 2 轮）
 		let aiRequestCount = 0;
 		// 记录 B站搜索 API 调用次数（应为 1 次）
@@ -260,7 +275,9 @@ test.describe("BiliGo agent flow (mocked end-to-end)", () => {
 		// ---------- Mock 1: AI API（/chat/completions）----------
 		// 第一轮返回 tool_call 请求 bilibili_search，
 		// 第二轮（工具结果回传后）返回最终文本。
-		await page.route("**/chat/completions", async (route) => {
+		// 用 context.route 拦截：AI API fetch 在扩展 SW 上下文执行，
+		// page.route 无法拦截 SW 发起的请求。
+		await context.route("**/chat/completions", async (route) => {
 			const request = route.request();
 			if (request.method() === "OPTIONS") {
 				await route.fulfill({ status: 204, headers: corsHeaders() });
@@ -270,9 +287,8 @@ test.describe("BiliGo agent flow (mocked end-to-end)", () => {
 			aiRequestCount += 1;
 			// 第一轮：返回 tool_call（AI SDK 解析后触发 tool-call 事件 -> tool_start 消息）
 			// 第二轮：工具结果回传后 AI 生成最终文本（触发 text-delta -> chunk 消息）
-			const body = aiRequestCount === 1
-				? buildToolCallSseStream()
-				: buildTextSseStream();
+			const body =
+				aiRequestCount === 1 ? buildToolCallSseStream() : buildTextSseStream();
 
 			await route.fulfill({
 				status: 200,
@@ -287,22 +303,27 @@ test.describe("BiliGo agent flow (mocked end-to-end)", () => {
 		// ---------- Mock 2: B站 nav API（wbi 密钥来源）----------
 		// wbi.ts 在首次搜索前会请求 nav 端点获取 wbi_img 密钥用于签名。
 		// 必须在 search/type 之前被拦截并返回有效密钥，否则 wbiSign 会抛错。
-		await page.route("**/api.bilibili.com/x/web-interface/nav", async (route) => {
-			await route.fulfill({
-				status: 200,
-				headers: {
-					...corsHeaders(),
-					"Content-Type": "application/json",
-				},
-				body: buildBilibiliNavResponse(),
-			});
-		});
+		// 用 context.route 拦截：B站 API fetch 同样在扩展 SW 上下文执行。
+		await context.route(
+			"**/api.bilibili.com/x/web-interface/nav",
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					headers: {
+						...corsHeaders(),
+						"Content-Type": "application/json",
+					},
+					body: buildBilibiliNavResponse(),
+				});
+			},
+		);
 
 		// ---------- Mock 3: B站搜索 API（search/type）----------
 		// bilibili_search 工具内部调 searchVideo -> wbiFetch(search/type)。
 		// 返回两条视频结果，stream.ts 第 184 行将结果转为 {type:'videos'} 消息推送，
 		// ChatContext SET_VIDEOS 后 MessageList 渲染 VideoCard 组件。
-		await page.route(
+		// 用 context.route 拦截：工具 fetch 在扩展 SW 上下文执行。
+		await context.route(
 			"**/api.bilibili.com/x/web-interface/wbi/search/type",
 			async (route) => {
 				bilibiliSearchHits += 1;
