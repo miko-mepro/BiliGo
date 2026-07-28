@@ -61,12 +61,12 @@ const baseSettings = {
 }
 
 /**
- * 构造一个 fake fullStream，依次产出给定的 stream parts。
+ * 构造一个 fake stream，依次产出给定的 stream parts。
  * part.type='text-delta' 时累积 text；part.type='error' 时记录 error。
  */
 function makeStreamResult(parts: Array<{ type: string; text?: string; error?: unknown }>) {
   return {
-    fullStream: (async function* () {
+    stream: (async function* () {
       for (const part of parts) {
         yield part
       }

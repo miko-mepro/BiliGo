@@ -292,7 +292,7 @@ async function describeCover(
       ],
     })
 
-    for await (const part of result.fullStream) {
+    for await (const part of result.stream) {
       if (part.type === 'text-delta') {
         description += part.text
       } else if (part.type === 'error') {
@@ -332,7 +332,7 @@ async function describeCover(
  *    'not support'/'unsupported' -> unsupported。
  * 5. 其它 -> failed。
  *
- * 注：AI SDK 的 streamText 在网络错误时会通过 fullStream 的 error part
+ * 注：AI SDK 的 streamText 在网络错误时会通过 stream 的 error part
  * 抛出 APICallError；其 `isRetryable` 字段也可作为辅助判据，但为保持与
  * 旧仓库行为一致，这里仍以 statusCode + message 为准。
  */
