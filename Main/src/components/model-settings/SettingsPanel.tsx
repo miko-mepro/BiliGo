@@ -6,14 +6,14 @@ import {
 	useState,
 } from "react";
 import {
+	isBuiltInProviderOrigin,
+	resolveOriginPattern,
+} from "../../config/origin-pattern.js";
+import {
 	type BiliAgentSettings,
 	saveBiliAgentSettings,
 	type ThemeMode,
 } from "../../config/settings.js";
-import {
-	isBuiltInProviderOrigin,
-	resolveOriginPattern,
-} from "../../config/origin-pattern.js";
 import type { ProviderConfig } from "../../lib/shared-types/provider.js";
 import { ProviderForm } from "./ProviderForm.js";
 import { ProviderList } from "./ProviderList.js";
@@ -441,6 +441,23 @@ export function SettingsPanel({
 								</div>
 							</div>
 						)}
+						{/* R7 风险提示：API Key 明文存储（设计依据 4.5 §2.3 R7） */}
+						<div
+							style={{
+								marginTop: 16,
+								padding: "8px 10px",
+								background: "#fff8e1",
+								border: "1px solid #ffe082",
+								borderRadius: 4,
+								fontSize: 11,
+								color: "#795548",
+								lineHeight: 1.5,
+							}}
+							role="note"
+							data-testid="api-key-risk-hint"
+						>
+							API Key 以明文存储在本地，建议定期轮换并设置用量限额
+						</div>
 					</div>
 				)}
 

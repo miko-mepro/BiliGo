@@ -500,6 +500,45 @@ describe("SettingsPanel", () => {
 		});
 	});
 
+	describe("R7 风险提示 - API Key 安全警告", () => {
+		it("R7) 模型 Tab 底部显示 API Key 风险提示文案", () => {
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings()}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			// 切到模型 Tab
+			fireEvent.click(screen.getByTestId("tab-model"));
+
+			// 验证 R7 风险提示存在，文案包含"API Key 以明文存储"
+			const riskHint = screen.getByTestId("api-key-risk-hint");
+			expect(riskHint).toBeInTheDocument();
+			expect(riskHint).toHaveTextContent("API Key 以明文存储");
+			// 文案应包含完整警告（包括"定期轮换"和"用量限额"）
+			expect(riskHint).toHaveTextContent("建议定期轮换并设置用量限额");
+		});
+
+		it("R7) 通用 Tab 不显示 API Key 风险提示", () => {
+			const { port } = createMockPort();
+			render(
+				<SettingsPanel
+					settings={makeInitialSettings()}
+					onClose={vi.fn()}
+					onSaved={vi.fn()}
+					port={port}
+				/>,
+			);
+
+			// 通用 Tab 是默认激活，验证不存在 api-key-risk-hint
+			expect(screen.queryByTestId("api-key-risk-hint")).not.toBeInTheDocument();
+		});
+	});
+
 	describe("对抗测试 - 提供商列表边界", () => {
 		it("B) settings.providers 为空数组时，ProviderList 显示无项提示", () => {
 			const { port } = createMockPort();
