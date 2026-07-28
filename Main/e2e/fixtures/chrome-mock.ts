@@ -140,8 +140,9 @@ export async function seedSettingsToStorage(
 	// 修正：用 w.url().startsWith("chrome-extension://") 优先筛选扩展 SW，
 	// 仅当当前无扩展 SW 时才回退到 waitForEvent("serviceworker") 等待其启动。
 	const workers = context.serviceWorkers();
-	const worker = workers.find((w) => w.url().startsWith("chrome-extension://"))
-		?? (await context.waitForEvent("serviceworker"));
+	const worker =
+		workers.find((w) => w.url().startsWith("chrome-extension://")) ??
+		(await context.waitForEvent("serviceworker"));
 
 	if (settings === null) {
 		// 清除存储区中的 settings 键
