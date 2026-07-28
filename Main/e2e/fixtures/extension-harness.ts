@@ -10,6 +10,7 @@
  * - 直接 page.goto(bilibili)，content script 由 Chrome 扩展机制自动注入
  *   到 isolated world，使用真实 chrome API
  * - 用 seedSettingsToStorage 播种设置到真实 chrome.storage
+ *   （通过 service worker 上下文执行，普通网页 main world 无 chrome 全局对象）
  * - 等待 [data-bili-agent-toggle] 出现确认 content script 已挂载
  * - 网络层 mock 用 page.route（不在 fixture 实现，留给 2.2/2.3 的 spec 文件）
  *
@@ -23,10 +24,9 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "@playwright/test";
 import {
-	seedSettingsToStorage,
-	type SeedSettings,
-	type StorageSeedOptions,
 	SETTINGS_STORAGE_KEY,
+	type StorageSeedOptions,
+	seedSettingsToStorage,
 } from "./chrome-mock.js";
 
 /** 扩展辅助选项 */
@@ -51,6 +51,14 @@ const DEFAULT_CS_TIMEOUT = 10_000;
  * 1. 导航到 bilibili（content script 由 Chrome 扩展机制自动注入到 isolated world）
  * 2. 等待 [data-bili-agent-toggle] 出现，确认 content script 已挂载
  * 3. 若提供了 settings 选项，用 seedSettingsToStorage 播种到真实 chrome.storage
+ *    （通过 service worker 上下文执行 chrome.storage.local.set）
+ *
+ * seed 时序说明（INFO 文档化）：
+ * seed 在 content script 挂载后才执行（步骤 3 依赖步骤 2 的 toggle 可见）。
+ * 此时 content script 已完成首次初始化（可能用默认 settings 渲染了首界面），
+ * seed 写入 storage 后，扩展通过 chrome.storage.onChanged 监听器被动感知变更
+ * 并同步到 UI。因此测试断言应等待面板内 provider 列表渲染完成，
+ * 而非断言首挂载瞬间的快照状态（首挂载可能仍是默认值）。
  *
  * @param page Playwright Page 对象
  * @param options 可选播种配置与导航参数
@@ -79,10 +87,21 @@ export async function openBilibiliWithMockedExtension(
 		.waitFor({ state: "visible", timeout: csTimeout });
 
 	// 3. 若提供了 settings 选项，播种到真实 chrome.storage.local
-	//    content script 在 isolated world 用真实 chrome API 读取存储
-	const settings = options.settings ?? null;
-	if (settings !== undefined) {
-		await seedSettingsToStorage(page, settings, settingsKey);
+	//    通过 service worker 上下文执行（普通网页 main world 无 chrome 全局对象，
+	//    P5-2.1 reviewer 第二次 REJECTED CRITICAL 修复）
+	//
+	// 守卫修复（P5-2.1 reviewer 第三次 REJECTED MEDIUM）：
+	// 原代码 const settings = options.settings ?? null 会把 undefined 转为 null，
+	// 导致 if (settings !== undefined) 永远为 true，undefined 语义（不碰 storage）
+	// 被错误折叠成 null 语义（清除 storage）。
+	// 修正：在 null 合并前检查原始 options.settings，三种语义正确区分：
+	//   undefined -> 跳过播种（不碰 storage）
+	//   null      -> 清除 storage
+	//   对象      -> 播种到 storage
+	if (options.settings !== undefined) {
+		const settings = options.settings ?? null;
+		// page.context() 获取所属 BrowserContext，从中取扩展 service worker
+		await seedSettingsToStorage(page.context(), settings, settingsKey);
 	}
 
 	return page;

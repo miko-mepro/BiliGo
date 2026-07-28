@@ -8,18 +8,30 @@
  *
  * 新方案（方案 B）：保留 playwright.config.ts 的 --load-extension，测试真实扩展加载。
  * content script 由 Chrome 扩展机制自动注入到 isolated world，使用真实 chrome API。
- * 本 fixture 不再 mock chrome API，而是通过 page.evaluate 调用真实 chrome.storage.local.set
- * 播种测试用 settings 数据到扩展的真实存储区。
+ *
+ * 上下文选择（P5-2.1 reviewer 第二次 REJECTED 修复）：
+ * 原用 page.evaluate 执行 chrome.storage，但 page.evaluate 运行在页面 main world，
+ * 普通 bilibili 网页的 main world 没有 chrome 全局对象，运行时抛
+ * ReferenceError: chrome is not defined。
+ * 修复：改用 service worker 上下文执行 chrome.storage.local.set。
+ * MV3 扩展的 chrome.* API 只在扩展上下文可用（content script isolated world、
+ * service worker、扩展页面），通过 context.serviceWorkers() 获取扩展 SW，
+ * 在 worker.evaluate 中执行 chrome.storage.local.set。
+ * 参照 Playwright 官方指南：
+ *   const [worker] = context.serviceWorkers();
+ *   await worker.evaluate(async () => { await chrome.storage.local.set({...}) });
  *
  * 设计依据：4.5 SC-4 + §0.1 E2E 默认使用可控 mock/fixture
  * 参照旧仓库 Backend/BiliAgent/packages/extension/e2e/smoke.spec.ts
  */
 
 // 仅导入类型（用 import type 避免把值引入 e2e bundle，减少 e2e 依赖）
-import type { ProviderConfig } from "../../src/lib/shared-types/provider.js";
+import type { BrowserContext } from "@playwright/test";
 // 从 settings.ts 导入真实的 SETTINGS_STORAGE_KEY，消除本地重复定义（reviewer LOW 修复）
 // 同时重新导出，供 extension-harness 等消费方使用（保持 fixture 的公共 API 兼容）
 import { SETTINGS_STORAGE_KEY } from "../../src/config/settings.js";
+import type { ProviderConfig } from "../../src/lib/shared-types/provider.js";
+
 export { SETTINGS_STORAGE_KEY };
 
 /** 存储区名称，对齐 chrome.storage.onChanged 的 AreaName 类型 */
@@ -89,37 +101,58 @@ export function emptySettings(): SeedSettings {
 }
 
 /**
- * 通过 page.evaluate 操纵真实 chrome.storage.local 播种 settings 数据。
+ * 通过 service worker 上下文操纵真实 chrome.storage.local 播种 settings 数据。
  *
  * 方案 B 核心：--load-extension 加载的扩展可访问真实 chrome API，
- * content script 和 service worker 都在 isolated world / 扩展上下文中，
- * 因此 page.evaluate 执行的 chrome.storage.local.set 会写入扩展真实存储区，
- * 随后扩展代码读取 storage 时能拿到播种的数据。
+ * content script 和 service worker 都在 isolated world / 扩展上下文中。
  *
- * 注意：page.evaluate 默认在页面 main world 执行，但 chrome.storage API
- * 在 --load-extension 环境下对页面上下文可用（Chrome 扩展权限授予后）。
- * 若页面上下文无法访问 chrome.storage（部分 MV3 配置），调用方应改用
- * service worker 上下文执行（通过 chrome.runtime.sendMessage 中转）。
+ * 上下文选择（P5-2.1 reviewer 第二次 REJECTED CRITICAL 修复）：
+ * 原用 page.evaluate 执行 chrome.storage，但 page.evaluate 运行在页面 main world，
+ * 普通 bilibili 网页的 main world 没有 chrome 全局对象，运行时抛
+ * ReferenceError: chrome is not defined。MV3 扩展的 chrome.* API 只在扩展上下文可用
+ * （content script isolated world、service worker、扩展页面）。
  *
- * @param page Playwright Page 对象（需已加载扩展）
+ * 正确方式：通过 context.serviceWorkers() 获取扩展的 service worker，
+ * 在 worker.evaluate 中执行 chrome.storage.local.set。--load-extension 加载的扩展
+ * 会自动启动 SW，因此 context.serviceWorkers() 通常能立即拿到 worker；
+ * 若 SW 尚未就绪，则用 context.waitForEvent('serviceworker') 等待其启动。
+ *
+ * 参照 Playwright 官方指南：
+ *   const [worker] = context.serviceWorkers();
+ *   await worker.evaluate(async () => { await chrome.storage.local.set({...}) });
+ *
+ * @param context Playwright BrowserContext 对象（需已加载扩展，--load-extension）
  * @param settings 要播种的 settings 数据（若为 null 则清除存储）
  * @param settingsKey 存储键名（默认 SETTINGS_STORAGE_KEY）
  */
 export async function seedSettingsToStorage(
-	page: import("@playwright/test").Page,
+	context: BrowserContext,
 	settings: SeedSettings | null,
 	settingsKey: string = SETTINGS_STORAGE_KEY,
 ): Promise<void> {
+	// 获取扩展的 service worker（--load-extension 加载的扩展会自动启动 SW）
+	// serviceWorkers() 返回当前 context 下所有 SW。
+	//
+	// SW URL 过滤修复（P5-2.1 reviewer 第三次 REJECTED LOW）：
+	// 原代码 workers[0] 取第一个 SW，但当导航到 bilibili.com 时，页面可能注册
+	// 自己的 web SW（如 PWA / 离线缓存 SW），该 SW 并非扩展 SW，在其中执行
+	// chrome.storage.* 会失败（无 chrome 全局对象）。
+	// 修正：用 w.url().startsWith("chrome-extension://") 优先筛选扩展 SW，
+	// 仅当当前无扩展 SW 时才回退到 waitForEvent("serviceworker") 等待其启动。
+	const workers = context.serviceWorkers();
+	const worker = workers.find((w) => w.url().startsWith("chrome-extension://"))
+		?? (await context.waitForEvent("serviceworker"));
+
 	if (settings === null) {
 		// 清除存储区中的 settings 键
-		await page.evaluate(
+		await worker.evaluate(
 			(key: string) => chrome.storage.local.remove(key),
 			settingsKey,
 		);
 		return;
 	}
-	// 播种 settings 到真实 chrome.storage.local
-	await page.evaluate(
+	// 播种 settings 到真实 chrome.storage.local（在 SW 上下文执行，chrome API 可用）
+	await worker.evaluate(
 		({ key, data }: { key: string; data: SeedSettings }) =>
 			chrome.storage.local.set({ [key]: data }),
 		{ key: settingsKey, data: settings },
@@ -131,12 +164,20 @@ export async function seedSettingsToStorage(
  *
  * 与 seedSettingsToStorage 功能等价，但返回字符串形式，
  * 便于在需要批量初始化或嵌入 page.addScriptTag 的场景使用。
- * 脚本在页面上下文执行，调用真实 chrome.storage.local.set。
+ * 脚本调用真实 chrome.storage.local.set。
+ *
+ * @remarks
+ * 本函数返回的脚本字符串依赖 chrome 全局对象，**仅适用于扩展页面或 service worker
+ * 上下文执行**。普通网页（如 bilibili.com）的 main world 无 chrome 全局对象，
+ * 在该上下文执行会抛 ReferenceError: chrome is not defined。
+ * 如需在普通网页上下文播种存储，应改用 seedSettingsToStorage（基于 service worker）。
  *
  * @param options 播种选项
- * @returns 可在 page.evaluate 中执行的 JS 表达式字符串
+ * @returns 可在扩展页面/SW 上下文执行的 JS 表达式字符串
  */
-export function buildStorageSeedScript(options: StorageSeedOptions = {}): string {
+export function buildStorageSeedScript(
+	options: StorageSeedOptions = {},
+): string {
 	const settings = options.settings ?? null;
 	const settingsKey = options.settingsKey ?? SETTINGS_STORAGE_KEY;
 
