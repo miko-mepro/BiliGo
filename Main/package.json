@@ -1,7 +1,8 @@
 {
   "name": "bili-go",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "engines": { "node": ">=20.0.0" },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,6 +29,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@vitest/coverage-v8": "^2.0.0",
     "@types/chrome": "^0.2.2",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",

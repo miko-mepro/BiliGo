@@ -16,7 +16,7 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      globals: globals.browser,
+      globals: { ...globals.browser, ...globals.serviceworker }, /* 合并 browser + serviceworker 全局变量，支持 SW 环境下的全局对象识别 */
     },
   },
 ])

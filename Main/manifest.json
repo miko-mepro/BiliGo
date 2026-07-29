@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "BiliGo",
   "version": "0.1.0",
+  "action": { "default_icon": { "128": "src/assets/icon-128.png" } },
   "description": "Bilibili 视频搜索助手",
   "minimum_chrome_version": "116",
   "background": {

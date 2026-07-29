@@ -10,5 +10,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./test/setup.ts'],
     exclude: ['**/node_modules/**', '**/e2e/**'],
+    coverage: { /* 覆盖率配置：v8 提供者 + 文本/html 报告 + 仅统计 src 目录 */
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**'],
+    },
   },
 })
