@@ -7,7 +7,7 @@ interface ErrorDisplayProps {
 }
 
 export function ErrorDisplay({ error }: ErrorDisplayProps): React.ReactElement {
-  const { dispatch } = useChat();
+  const { dispatch, state, sendMessage } = useChat();
 
   const handleDismiss = useCallback((): void => {
     dispatch({ type: 'SET_ERROR', payload: null });
@@ -15,8 +15,12 @@ export function ErrorDisplay({ error }: ErrorDisplayProps): React.ReactElement {
 
   const handleRetry = useCallback((): void => {
     dispatch({ type: 'SET_ERROR', payload: null });
-    // The user can manually retry by sending a new message
-  }, [dispatch]);
+    // 从消息列表中反向查找最后一条用户消息，重新发送
+    const lastUserMsg = [...state.messages].reverse().find(m => m.role === 'user');
+    if (lastUserMsg) {
+      sendMessage(lastUserMsg.content);
+    }
+  }, [dispatch, state.messages, sendMessage]);
 
   const isRateLimit = String(error.code) === '429';
   const isAuthError = error.code === '401' || error.code === '403' || error.code === 'auth';

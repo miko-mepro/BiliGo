@@ -80,3 +80,16 @@ function startObserver(): void {
     })
   }
 }
+
+// 页面卸载时清理 MutationObserver，防止 SPA 长会话累积内存泄漏
+window.addEventListener('pagehide', () => {
+  if (observer) {
+    observer.disconnect()
+    observer = null
+  }
+})
+
+// bfcache 恢复后重新启动 observer，防止面板丢失
+window.addEventListener('pageshow', () => {
+  startObserver()
+})

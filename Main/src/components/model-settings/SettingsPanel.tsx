@@ -180,8 +180,10 @@ export function SettingsPanel({
 			setSaveError("");
 
 			// ---- MV3 origin 授权：必须在用户手势同步栈内完成 ----
-			// 遍历所有自定义 provider，对非内置域名申请 origin 权限。
-			// 内置 provider（isBuiltIn=true）跳过；自定义但 baseUrl 为内置域名也跳过。
+			// 先同步收集所有需要申请的 origin pattern，再一次性批量请求权限。
+			// 这是因为 chrome.permissions.request 的 origins 参数本身支持数组，
+			// 批量请求可避免 for...of 中第一个 await 后脱离用户手势同步栈的问题。
+			const patterns: string[] = [];
 			for (const provider of providers) {
 				// 仅自定义 provider 需要申请（内置 provider 已在 host_permissions 中）
 				if (!provider.isCustom) {
@@ -201,10 +203,13 @@ export function SettingsPanel({
 				if (pattern === "") {
 					continue;
 				}
-				// 在用户手势同步栈内申请权限（Chrome 允许 onClick 同步链中 await）
+				patterns.push(pattern);
+			}
+			// 在用户手势同步栈内一次性申请所有权限
+			if (patterns.length > 0) {
 				try {
 					const granted = await chrome.permissions.request({
-						origins: [pattern],
+						origins: patterns,
 					});
 					if (!granted) {
 						// 用户拒绝授权：渲染错误提示，不保存，不触发 onSaved

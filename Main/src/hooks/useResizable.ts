@@ -44,8 +44,8 @@ export interface UseResizableReturn {
 
 const DEFAULT_MIN_WIDTH = 200;
 const DEFAULT_MIN_HEIGHT = 150;
-const DEFAULT_MAX_WIDTH = window.innerWidth;
-const DEFAULT_MAX_HEIGHT = window.innerHeight;
+const DEFAULT_MAX_WIDTH = typeof window !== 'undefined' ? window.innerWidth : Number.MAX_SAFE_INTEGER;
+const DEFAULT_MAX_HEIGHT = typeof window !== 'undefined' ? window.innerHeight : Number.MAX_SAFE_INTEGER;
 
 const HANDLE_SIZE = 12;
 const HANDLE_OFFSET = -6;
