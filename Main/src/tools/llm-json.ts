@@ -96,10 +96,10 @@ function resolveActiveProvider(
 function splitSystemMessage(
   messages: ChatMessage[],
 ): { system: string | undefined; rest: ChatMessage[] } {
-  const systemMsg = messages.find((m) => m.role === 'system')
-  if (!systemMsg) return { system: undefined, rest: messages }
+  const systemMsgs = messages.filter((m) => m.role === 'system')
+  if (systemMsgs.length === 0) return { system: undefined, rest: messages }
   return {
-    system: systemMsg.content,
+    system: systemMsgs.map(m => m.content).join('\n\n') || undefined,
     rest: messages.filter((m) => m.role !== 'system'),
   }
 }
@@ -128,6 +128,7 @@ async function tryGenerateObject<T>(
       model,
       schema,
       messages,
+      abortSignal: AbortSignal.timeout(30_000),
       ...(system ? { system } : {}),
     } as unknown as Parameters<typeof generateObject>[0]
     const result = await generateObject(options)
@@ -146,6 +147,7 @@ async function tryGenerateText(
     const result = await generateText({
       model,
       messages,
+      abortSignal: AbortSignal.timeout(30_000),
       ...(system ? { system } : {}),
     })
     return result.text

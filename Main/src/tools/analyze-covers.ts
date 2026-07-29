@@ -193,7 +193,11 @@ async function fetchCoverAsDataUrl(
   picUrl: string,
   fetchImpl: typeof fetch,
 ): Promise<string> {
-  const response = await fetchImpl(normalizePicUrl(picUrl))
+  const url = normalizePicUrl(picUrl)
+  if (!isAllowedCoverUrl(url)) {
+    throw new Error(`Cover image URL not allowed: ${url}`)
+  }
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(10_000) })
   if (!response.ok) {
     throw new Error(`Failed to fetch cover image: ${response.status}`)
   }
@@ -202,6 +206,23 @@ async function fetchCoverAsDataUrl(
     response.headers.get('Content-Type')?.split(';')[0] || 'image/jpeg'
   const bytes = new Uint8Array(await response.arrayBuffer())
   return `data:${contentType};base64,${bytesToBase64(bytes)}`
+}
+
+/** 校验封面 URL 仅允许 https 协议且域名为 bilibili 相关域名，防御 SSRF */
+function isAllowedCoverUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'https:') return false
+  const hostname = parsed.hostname.toLowerCase()
+  return hostname === 'i0.hdslb.com'
+    || hostname === 'i1.hdslb.com'
+    || hostname === 'i2.hdslb.com'
+    || hostname.endsWith('.hdslb.com')
+    || hostname.endsWith('.bilibili.com')
 }
 
 /** 补全 `//`-开头的协议相对 URL 为 https。 */
@@ -290,6 +311,7 @@ async function describeCover(
           ],
         },
       ],
+      abortSignal: AbortSignal.timeout(30_000),
     })
 
     for await (const part of result.stream) {

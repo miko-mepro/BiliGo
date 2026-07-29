@@ -8,6 +8,8 @@ interface StoredEntry {
   expiresAt: number
 }
 
+const updateQueues = new Map<string, Promise<unknown>>()
+
 export class WorkingMemoryStore {
   static async create(traceId: string): Promise<WorkingMemory> {
     const memory: WorkingMemory = {
@@ -44,19 +46,27 @@ export class WorkingMemoryStore {
     traceId: string,
     patch: Partial<WorkingMemory>,
   ): Promise<WorkingMemory | undefined> {
-    const existing = await this.get(traceId)
-    if (!existing) return undefined
+    const work = async (): Promise<WorkingMemory | undefined> => {
+      const existing = await this.get(traceId)
+      if (!existing) return undefined
 
-    const updated: WorkingMemory = { ...existing, ...patch, traceId }
-    const key = STORAGE_PREFIX + traceId
-    await chrome.storage.session.set({
-      [key]: { data: updated, expiresAt: Date.now() + TTL_MS },
-    })
+      const updated: WorkingMemory = { ...existing, ...patch, traceId }
+      const key = STORAGE_PREFIX + traceId
+      await chrome.storage.session.set({
+        [key]: { data: updated, expiresAt: Date.now() + TTL_MS },
+      })
 
-    return updated
+      return updated
+    }
+
+    const prev = updateQueues.get(traceId) ?? Promise.resolve()
+    const next = prev.then(work, work)
+    updateQueues.set(traceId, next)
+    return next as Promise<WorkingMemory | undefined>
   }
 
   static async release(traceId: string): Promise<void> {
+    updateQueues.delete(traceId)
     const key = STORAGE_PREFIX + traceId
     await chrome.storage.session.remove(key)
   }

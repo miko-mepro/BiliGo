@@ -262,7 +262,7 @@ describe('analyzeCovers - cache tri-state', () => {
 
     // 只对过期项 fetch / streamText
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledWith('https://i0.hdslb.com/expired.jpg')
+    expect(fetchMock).toHaveBeenCalledWith('https://i0.hdslb.com/expired.jpg', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(streamTextMock).toHaveBeenCalledTimes(1)
     expect([...descriptions.entries()]).toEqual([
       ['BVfresh', '新鲜缓存'],
@@ -356,7 +356,7 @@ describe('analyzeCovers - edge cases', () => {
       { fetchImpl: fetchMock as unknown as typeof fetch, now: () => NOW },
     )
 
-    expect(fetchMock).toHaveBeenCalledWith('https://i0.hdslb.com/cover-1.jpg')
+    expect(fetchMock).toHaveBeenCalledWith('https://i0.hdslb.com/cover-1.jpg', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('空文本输出视为 failed，不缓存', async () => {

@@ -170,7 +170,7 @@ describe('slang_understand / memory', () => {
       triedKeywords: ['旧词'],
     })
 
-    // LLM 路径：triedKeywords 写入本次 normalized
+    // LLM 路径：triedKeywords 合并本次 normalized 到已有列表（去重）
     await executeUnderstand(
       '触发 LLM 路径的输入',
       memoryStore,
@@ -180,7 +180,7 @@ describe('slang_understand / memory', () => {
     expect(memoryStore.update).toHaveBeenCalledTimes(1)
     const llmCallArgs = (memoryStore.update as ReturnType<typeof vi.fn>).mock
       .calls[0][0]
-    expect(llmCallArgs).toEqual({ triedKeywords: ['记忆关键词'] })
+    expect(llmCallArgs).toEqual({ triedKeywords: ['旧词', '记忆关键词'] })
 
     // 字典命中路径：同样写入字典 normalized，且不调 LLM
     vi.clearAllMocks()

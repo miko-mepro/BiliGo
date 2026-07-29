@@ -101,12 +101,13 @@ export async function executeExpand(
     .map((kw) => kw.trim())
     .filter((kw) => kw.length > 0)
 
-  const suggest = await safeCall(async () => {
-    if (!seed[0]) return []
-    return searchSuggest(seed[0])
-  })
-
-  const hot = await safeCall(() => searchHot(HOT_LIMIT))
+  const [suggest, hot] = await Promise.all([
+    safeCall(async () => {
+      if (!seed[0]) return []
+      return searchSuggest(seed[0])
+    }),
+    safeCall(() => searchHot(HOT_LIMIT)),
+  ])
 
   const matchedTags = matchTags(query, seed)
   const matchedCategories = matchCategories(query, seed)

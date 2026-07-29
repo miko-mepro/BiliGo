@@ -192,9 +192,11 @@ async function safeUpdateMemory(
 ): Promise<void> {
   if (!normalized || normalized.trim().length === 0) return
   try {
-    await memoryStore.update({
-      triedKeywords: [normalized],
-    })
+    const existing = await memoryStore.get()
+    const merged = existing
+      ? Array.from(new Set([...existing.triedKeywords, normalized]))
+      : [normalized]
+    await memoryStore.update({ triedKeywords: merged })
   } catch {
     // memoryStore 写入失败不影响工具返回（旧仓库同款兜底）
   }

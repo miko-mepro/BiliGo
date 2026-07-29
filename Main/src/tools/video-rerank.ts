@@ -89,22 +89,25 @@ export async function executeVideoRerank(
     return { items: [], strategy: 'fallback', trimmed }
   }
 
-  const tagResults = await Promise.allSettled(
-    truncated.map((card) => fetchVideoTags(card.bvid)),
-  )
-
+  const BATCH_SIZE = 5
   const tagsByBvid = new Map<string, string[]>()
-  truncated.forEach((card, index) => {
-    const result = tagResults[index]
-    if (result?.status === 'fulfilled') {
-      const names = result.value
-        .map((tag: VideoTag) => tag.tag_name)
-        .filter((name: string): name is string => typeof name === 'string' && name.length > 0)
-      tagsByBvid.set(card.bvid, names)
-    } else {
-      tagsByBvid.set(card.bvid, [])
-    }
-  })
+  for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
+    const batch = truncated.slice(i, i + BATCH_SIZE)
+    const results = await Promise.allSettled(
+      batch.map((card) => fetchVideoTags(card.bvid)),
+    )
+    batch.forEach((card, j) => {
+      const result = results[j]
+      if (result?.status === 'fulfilled') {
+        const names = result.value
+          .map((tag: VideoTag) => tag.tag_name)
+          .filter((name: string): name is string => typeof name === 'string' && name.length > 0)
+        tagsByBvid.set(card.bvid, names)
+      } else {
+        tagsByBvid.set(card.bvid, [])
+      }
+    })
+  }
 
   try {
     const prompt = buildPrompt(intent, truncated, tagsByBvid)
