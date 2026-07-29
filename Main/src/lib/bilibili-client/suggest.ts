@@ -27,9 +27,11 @@ export async function searchSuggest(term: string): Promise<SuggestItem[]> {
   url.search = `term=${encodeURIComponent(term)}&main_ver=v1`
 
   try {
+    // 加入 10s 超时，避免联想建议接口长时间挂起
     const response = await fetch(url, {
       referrer: 'https://www.bilibili.com/',
       headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
 
     if (!response.ok) {

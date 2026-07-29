@@ -106,7 +106,9 @@ async function fetchSigned(input: string | URL, init: RequestInit | undefined, f
   const url = new URL(input.toString());
   const signedParams = wbiSign(url.searchParams, keys.imgKey, keys.subKey);
   url.search = buildFinalQuery(signedParams);
-  return fetch(url, init);
+  // 每次 fetch 独立合成本地超时 signal，不透传外部 init.signal，
+  // 以保证 401/-352 重试场景下每一次请求都重新计时 10s。
+  return fetch(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) });
 }
 
 async function refreshWbiKeys(): Promise<WbiKeys> {
@@ -133,11 +135,13 @@ function isBilibiliRiskResponse(body: unknown): body is { code: number } {
 }
 
 async function fetchWbiKeys(): Promise<WbiKeys> {
+  // 加入 10s 超时，避免导航接口长时间挂起导致 WBI 密钥拉取阻塞
   const response = await fetch(NAV_URL, {
     referrer: "https://www.bilibili.com/",
     headers: {
       Accept: "application/json",
     },
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!response.ok) {

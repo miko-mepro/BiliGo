@@ -34,8 +34,10 @@ export async function fetchVideoTags(
   url.searchParams.set('bvid', bvid)
 
   try {
+    // 加入 10s 超时，避免标签拉取长时间挂起
     const response = await fetch(url.toString(), {
       headers: buildHeaders(sessdata),
+      signal: AbortSignal.timeout(10_000),
     })
 
     if (!response.ok) {
@@ -74,11 +76,16 @@ export async function fetchVideoTags(
   }
 }
 
+// SESSDATA 合法字符集：仅允许字母/数字及 B 站实际使用的符号子集。
+// 不合规时降级匿名搜索（不附 Cookie），避免脏 cookie 直接炸掉标签拉取。
+const SESSDATA_PATTERN = /^[A-Za-z0-9%,*_-]+$/;
+
 function buildHeaders(sessdata: string | undefined): HeadersInit {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   }
-  if (sessdata) {
+  // 仅在 SESSDATA 通过格式校验时才附加 Cookie，否则降级匿名请求
+  if (sessdata && SESSDATA_PATTERN.test(sessdata)) {
     headers.Cookie = `SESSDATA=${sessdata}`
   }
   return headers

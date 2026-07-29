@@ -27,8 +27,10 @@ export async function searchHot(limit: number = 20): Promise<HotKeyword[]> {
   url.searchParams.set('limit', String(limit))
 
   try {
+    // 加入 10s 超时，避免热点拉取长时间挂起
     const response = await fetch(url.toString(), {
       headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
     })
 
     if (!response.ok) {
