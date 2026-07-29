@@ -22,14 +22,18 @@ export async function getSessionMemory(
   conversationId: string,
 ): Promise<SessionMemory> {
   const key = `${STORAGE_PREFIX}${conversationId}`
-  const result = (await chrome.storage.session.get(key)) as Record<
-    string,
-    SessionMemory | undefined
-  >
+  try {
+    const result = (await chrome.storage.session.get(key)) as Record<
+      string,
+      SessionMemory | undefined
+    >
 
-  const existing = result[key]
-  if (existing) {
-    return existing
+    const existing = result[key]
+    if (existing) {
+      return existing
+    }
+  } catch {
+    // 读取失败时降级返回空骨架，与"不存在"行为一致
   }
 
   return {
@@ -79,8 +83,12 @@ export async function updateSessionMemory(
   }
 
   const key = `${STORAGE_PREFIX}${conversationId}`
-  await chrome.storage.session.set({ [key]: updated })
-  return true
+  try {
+    await chrome.storage.session.set({ [key]: updated })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

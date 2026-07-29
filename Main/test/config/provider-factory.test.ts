@@ -136,6 +136,11 @@ describe('createModel', () => {
     expect(openaiMocks.createOpenAI).not.toHaveBeenCalled()
     expect(anthropicMocks.createAnthropic).not.toHaveBeenCalled()
   })
+
+  it('脏 format 抛错', () => {
+    const config = provider({ format: 'invalid' as any })
+    expect(() => createModel(config)).toThrow('Unsupported provider format')
+  })
 })
 
 describe('validateProviderConfig', () => {
@@ -162,6 +167,12 @@ describe('validateProviderConfig', () => {
 
     expect(result.valid).toBe(true)
     expect(result.errors).toEqual([])
+  })
+
+  it('API Key 含非法字符(换行)时拒绝', () => {
+    const result = validateProviderConfig(provider({ apiKey: 'sk-test\nInjected' }))
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => e.includes('非法字符'))).toBe(true)
   })
 })
 

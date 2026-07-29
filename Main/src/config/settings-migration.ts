@@ -99,7 +99,10 @@ function normalizeProvider(p: unknown): ProviderConfig {
 export function migrateSettings(raw: unknown): BiliAgentSettings {
   // 规则 1：非对象/空/数组 -> 默认设置
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { ...DEFAULT_SETTINGS }
+    return {
+      ...DEFAULT_SETTINGS,
+      providers: DEFAULT_SETTINGS.providers.map(p => ({ ...p })),
+    }
   }
 
   const record = raw as Record<string, unknown>

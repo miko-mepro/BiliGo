@@ -123,6 +123,15 @@ function collectBuiltInHostnames(): string[] {
 }
 
 /**
+ * 模块级缓存：内置 provider 的 hostname 列表。
+ *
+ * 在模块首次加载时通过 IIFE 一次性收集，避免每次 isBuiltInProviderOrigin
+ * 调用都重复遍历 BUILT_IN_PROVIDERS（origin 校验处于请求热路径）。
+ * BUILT_IN_PROVIDERS 在编译期固化，运行期不可变，故缓存安全。
+ */
+const BUILT_IN_HOSTNAMES = collectBuiltInHostnames()
+
+/**
  * 判断给定 baseUrl 是否为内置 provider 的 origin。
  *
  * 通过比较 URL hostname 判定（忽略端口、路径、协议）。
@@ -151,5 +160,5 @@ export function isBuiltInProviderOrigin(baseUrl: string): boolean {
 	}
 
 	// 严格 hostname 相等比较，防御前缀/后缀欺骗
-	return collectBuiltInHostnames().includes(hostname)
+	return BUILT_IN_HOSTNAMES.includes(hostname)
 }

@@ -156,4 +156,21 @@ describe('SessionMemory', () => {
     const retrieved = await getSessionMemory('conv-2')
     expect(retrieved.recentExpansions).toHaveLength(0)
   })
+
+  it('set 抛异常时返回 false', async () => {
+    ;(chrome.storage.session.set as any).mockRejectedValueOnce(
+      new Error('quota exceeded'),
+    )
+    const result = await updateSessionMemory('conv-err', {
+      recentUnderstandings: [
+        {
+          original: 'a',
+          normalized: 'a',
+          explanation: 'a',
+          matchedDict: false,
+        },
+      ],
+    })
+    expect(result).toBe(false)
+  })
 })
