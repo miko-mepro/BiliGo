@@ -95,9 +95,9 @@ export function isCSMessage(value: unknown): value is CSMessage {
 
 export function inferErrorCode(message: string): string {
   const lower = message.toLowerCase()
-  if (message.includes('401') || message.includes('403')
+  if (/\b401\b/.test(message) || /\b403\b/.test(message)
     || lower.includes('api key') || lower.includes('auth')) return '401'
-  if (message.includes('429') || lower.includes('rate limit')) return '429'
+  if (/\b429\b/.test(message) || lower.includes('rate limit')) return '429'
   return 'NETWORK_ERROR'
 }
 

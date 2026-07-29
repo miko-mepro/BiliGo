@@ -329,6 +329,10 @@ export async function handleChatMessage(
   })
 
   try {
+    // 运行时防御：校验 stream 是否为可迭代对象
+    if (!result.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
+      throw new Error('模型未返回可迭代流')
+    }
     streamLoop: for await (const part of result.stream as AsyncIterable<TextStreamPart<ToolSet>>) {
       if (session.disconnected) return
       switch (part.type) {
@@ -476,7 +480,7 @@ export async function handleGenerateTitle(
     if (session.disconnected) return
     // 截断到 20 字（按字符数，兼容中文）
     const rawTitle = (result.text ?? '').trim()
-    const title = rawTitle.slice(0, TITLE_MAX_CHARS)
+    const title = Array.from(rawTitle).slice(0, TITLE_MAX_CHARS).join('')
     postToPort(port, session, { type: 'title', conversationId: msg.conversationId, title })
   } catch (err) {
     if (session.disconnected) return
@@ -568,13 +572,28 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
       if (!isCSMessage(msg)) return
       switch (msg.type) {
         case 'chat':
-          void handleChatMessage(port, session, msg)
+          void handleChatMessage(port, session, msg).catch((err) => {
+            if (session.disconnected) return
+            const message = err instanceof Error ? err.message : String(err)
+            const code = inferErrorCode(message)
+            postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
+            postToPort(port, session, { type: 'done' })
+          })
           break
         case 'generate_title':
-          void handleGenerateTitle(port, session, msg)
+          void handleGenerateTitle(port, session, msg).catch((err) => {
+            if (session.disconnected) return
+            const message = err instanceof Error ? err.message : String(err)
+            const code = inferErrorCode(message)
+            postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
+          })
           break
         case 'test_connection':
-          void handleTestConnection(port, session, msg)
+          void handleTestConnection(port, session, msg).catch((err) => {
+            if (session.disconnected) return
+            const message = err instanceof Error ? err.message : String(err)
+            postToPort(port, session, { type: 'connection_result', ok: false, error: message })
+          })
           break
         case 'ping':
           handlePing(port, session)
