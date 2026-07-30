@@ -474,6 +474,7 @@ export function Panel({
 					className="bili-agent-panel__heading"
 					role="button"
 					tabIndex={0}
+					data-no-drag
 					aria-label={
 						isSettingsOpen
 							? "BiliGo"
