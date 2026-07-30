@@ -13,17 +13,6 @@ export function App(): React.ReactElement {
   const theme = useTheme()
 
   useEffect(() => {
-    const root = document.getElementById('bili-agent-host')?.shadowRoot?.querySelector(
-      '[data-bili-agent-root]',
-    ) as HTMLElement | null
-    if (root) {
-      root.setAttribute('data-theme', theme)
-      root.classList.toggle('bili-agent-theme-dark', theme === 'dark')
-      root.classList.toggle('bili-agent-theme-light', theme === 'light')
-    }
-  }, [theme])
-
-  useEffect(() => {
     // TODO-37：storage.get 失败时降级到默认关闭态（isOpen=false）并标记 ready，
     // 避免未捕获 rejection 导致控制台报错或 Promise 悬挂。
     chrome.storage.local.get([STORAGE_KEY]).then((result) => {

@@ -472,7 +472,6 @@ export function Panel({
 			>
 				<div
 					className="bili-agent-panel__heading"
-					data-no-drag
 					role="button"
 					tabIndex={0}
 					aria-label={
