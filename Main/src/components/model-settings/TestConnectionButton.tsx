@@ -94,6 +94,15 @@ export function TestConnectionButton({
 		};
 	}, [cleanup]);
 
+	// TODO-23：provider 变化时清理上一次测试残留的监听器与定时器。
+	// 切换 provider 配置时旧 listener/timer 不应再对新 provider 生效，
+	// 故在 [provider, cleanup] 变化时执行 cleanup（effect 的 cleanup 函数在下次执行前调用）。
+	useEffect(() => {
+		return () => {
+			cleanup();
+		};
+	}, [provider, cleanup]);
+
 	/**
 	 * 点击按钮触发连接测试。
 	 *
@@ -150,7 +159,17 @@ export function TestConnectionButton({
 		});
 
 		// 经单 Port 发送连接测试请求（P5 核心架构差异：经单 Port 而非 sendMessage）
-		port.postMessage({ type: "test_connection", provider });
+		// TODO-15：postMessage 可能因 Port 已断开而同步抛错，此处 try/catch 兜底，
+		// 防止抛出未捕获异常导致 listener/timer 残留。
+		try {
+			port.postMessage({ type: "test_connection", provider });
+		} catch {
+			// 连接已断开：置失败态 + 错误信息 + 清理 listener/timer + 提前返回
+			setStatus("fail");
+			setErrorMessage("连接已断开");
+			cleanup();
+			return;
+		}
 
 		// Promise.race：SW 回复与超时哪个先到用哪个
 		const result = await Promise.race([connectionPromise, timeoutPromise]);

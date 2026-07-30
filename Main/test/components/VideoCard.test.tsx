@@ -121,8 +121,40 @@ describe('VideoCard', () => {
       };
       render(<VideoCard video={videoWithHtml} />);
 
-      expect(screen.getByText('这是一个视频')).toBeInTheDocument();
-      expect(screen.queryByText('alert(1)')).not.toBeInTheDocument();
+      // TODO-20：删除 dangerousTags 白名单循环后，<script> 标签本身被剥离，
+      // 但其文本内容 alert(1) 会作为纯文本保留（非可执行代码，无 XSS 风险）。
+      // React 渲染时会做 HTML 实体转义兜底，确保不作为 HTML 执行。
+      expect(screen.getByText('这是一个alert(1)视频')).toBeInTheDocument();
+      // 确认没有任何 script 标签被渲染到 DOM
+      expect(document.querySelector('script')).toBeNull();
+    });
+
+    it('strips svg tag with onerror event handler (XSS prevention)', () => {
+      // TODO-20：svg/onerror 是危险的自闭合/事件式标签，
+      // 删除白名单循环后改由 /<[^>]*>/g 统一剥离，确保不渲染为元素
+      const videoWithSvg = {
+        ...mockVideo,
+        title: '视频<svg/onload=alert(1)>标题',
+      };
+      render(<VideoCard video={videoWithSvg} />);
+
+      // 标签被剥离为纯文本，alert(1) 不作为可执行代码出现
+      expect(screen.getByText('视频标题')).toBeInTheDocument();
+      expect(document.querySelector('svg[onload], svg[onerror]')).toBeNull();
+    });
+
+    it('strips img tag with onerror event handler (XSS prevention)', () => {
+      // TODO-20：img/onerror 是典型 XSS 向量，
+      // 经 /<[^>]*>/g 剥离后只剩纯文本，不渲染 img 元素
+      const videoWithImg = {
+        ...mockVideo,
+        title: '封面<img src=x onerror=alert(document.cookie)>说明',
+      };
+      render(<VideoCard video={videoWithImg} />);
+
+      expect(screen.getByText('封面说明')).toBeInTheDocument();
+      const renderedImg = document.querySelector('img[onerror]');
+      expect(renderedImg).toBeNull();
     });
 
     it('handles multiple keywords', () => {

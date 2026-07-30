@@ -24,10 +24,15 @@ export function App(): React.ReactElement {
   }, [theme])
 
   useEffect(() => {
+    // TODO-37：storage.get 失败时降级到默认关闭态（isOpen=false）并标记 ready，
+    // 避免未捕获 rejection 导致控制台报错或 Promise 悬挂。
     chrome.storage.local.get([STORAGE_KEY]).then((result) => {
       if (result[STORAGE_KEY] === true) {
         setIsOpen(true)
       }
+      setIsReady(true)
+    }).catch(() => {
+      // 读失败用默认值（关闭态），仍需推进 ready 状态避免 UI 永久挂起
       setIsReady(true)
     })
 
@@ -45,7 +50,8 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     if (isReady) {
-      void chrome.storage.local.set({ [STORAGE_KEY]: isOpen })
+      // TODO-37：storage.set 写失败静默降级，不阻塞 UI
+      void chrome.storage.local.set({ [STORAGE_KEY]: isOpen }).catch(() => {})
     }
   }, [isOpen, isReady])
 

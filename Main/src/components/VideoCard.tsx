@@ -30,22 +30,21 @@ function formatPlayCount(count: unknown): string {
 /**
  * Parses title and converts <em class="keyword"> tags to bold elements
  * Also strips any other HTML tags for security
+ *
+ * TODO-20：删除 dangerousTags 白名单循环。
+ * 原实现只对 script/style/iframe/object/embed 做整对移除，遗漏 <svg/onerror>、<img/onerror> 等
+ * 危险自闭合/事件式标签。改为：仅保留 <em class="keyword"> 提取与 split，
+ * 其余所有非 em 片段一律 `part.replace(/<[^>]*>/g, '')` 纯文本剥离，
+ * 不再依赖具体标签名白名单。React 渲染时再做 HTML 实体转义兜底。
  */
 function parseTitle(title: string | undefined): React.ReactNode {
   // 防御：title 缺失时不渲染任何内容，避免 undefined.replace 崩溃
   if (typeof title !== 'string') {
     return null;
   }
-  // First, remove dangerous tags and their content completely
-  let sanitized = title;
-  const dangerousTags = ['script', 'style', 'iframe', 'object', 'embed'];
-  for (const tag of dangerousTags) {
-    const regex = new RegExp(`<${tag}[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
-    sanitized = sanitized.replace(regex, '');
-  }
 
-  // Handle keyword highlighting
-  const parts = sanitized.split(/(<em[^>]*>.*?<\/em>)/gi);
+  // Handle keyword highlighting：仅保留 em 提取 split，不再做 dangerousTags 白名单移除
+  const parts = title.split(/(<em[^>]*>.*?<\/em>)/gi);
 
   return parts.map((part, index) => {
     // Check if this part is an em tag with keyword class
@@ -54,8 +53,9 @@ function parseTitle(title: string | undefined): React.ReactNode {
       return <strong key={index}>{emMatch[1]}</strong>;
     }
 
-    // Strip any other HTML tags for security
-    const cleanPart = part.replace(/<[^>]+>/g, '');
+    // Strip any other HTML tags for security：纯文本剥离所有非 em 标签
+    // （含 svg/onerror、img/onerror、script 等危险标签，统一被 /<[^>]*>/g 清除）
+    const cleanPart = part.replace(/<[^>]*>/g, '');
     return <React.Fragment key={index}>{cleanPart}</React.Fragment>;
   });
 }

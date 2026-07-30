@@ -270,13 +270,22 @@ export function useConversationSaver(
     // 仅在 true -> false 转换时触发
     if (!(wasLoading && !state.isLoading)) return
     if (!hasAiActivity(state)) return
+    // TODO-31：触发点 5 卸载保护。
+    // saveCurrentConversation 为异步，组件在 await 期间卸载/重渲染时回调仍会执行，
+    // 可能对已卸载组件调用 dispatchHistoryIndexDirty 导致空操作或告警。
+    // 用 cancelled 标志在 cleanup 时短路异步回调，避免卸载后副作用。
+    let cancelled = false
     void (async () => {
       try {
         await callbacks.saveCurrentConversation()
+        if (cancelled) return
         callbacks.dispatchHistoryIndexDirty()
       } catch {
         // 自动保存失败不得阻塞聊天 UI
       }
     })()
+    return () => {
+      cancelled = true
+    }
   }, [hydrated, state, callbacks])
 }

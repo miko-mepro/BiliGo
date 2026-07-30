@@ -683,9 +683,13 @@ function useChatController(): UseChatResult {
         messages.length >= 2 &&
         !titleRequestedRef.current.has(current.conversationId)
       ) {
-        titleRequestedRef.current.add(current.conversationId)
         const connection = connectionRef.current
         if (connection && !connection.isDisconnected()) {
+          // TODO-22：titleRequestedRef.add 移到"连接可用"判定块内部、紧邻 postMessage。
+          // 原实现在外层判定后立即 add，若连接已断开则 add 了却未真正发请求，
+          // 后续同一 conversationId 永不重试（标题生成卡死）。现仅在确认能 postMessage 时
+          // 才标记已请求，断连场景下次保存仍可重试。
+          titleRequestedRef.current.add(current.conversationId)
           // 取前 2 条消息请求生成标题
           connection.postMessage({
             type: 'generate_title',
