@@ -332,6 +332,7 @@ const css = `
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 5px;
     background: linear-gradient(135deg, var(--bili-pink-light) 0%, var(--bili-pink-mid) 100%);
     flex-shrink: 0;
     box-shadow: 0 2px 8px var(--bili-pink-alpha-15);
