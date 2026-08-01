@@ -2,3 +2,5 @@ Fetch/
 .opencode/
 .swarm/
 Backend/
+Docs/**
+!Docs/.Docs
