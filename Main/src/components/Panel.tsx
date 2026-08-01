@@ -13,7 +13,6 @@ import {
 	getHistoryIndex,
 	updateTitle,
 } from "../lib/history/store.js";
-import type { ConversationRecord } from "../lib/shared-types/index.js";
 import { ChatInput } from "./ChatInput.js";
 import { HistoryDropdown } from "./HistoryDropdown.js";
 import { MessageList } from "./MessageList.js";
@@ -35,15 +34,7 @@ interface PanelProps {
 	toggleButtonRect?: ToggleButtonRect | null;
 	onClose?: () => void;
 	onInteractionStateChange?: (isInteracting: boolean) => void;
-	// 🆕 历史功能回调（integration 分支注入；ui-layer 提供 stub 默认值）
 	onNewChat?: () => void;
-	historyCallbacks?: {
-		getIndex: () => Promise<ConversationRecord[]>;
-		loadConversation: (id: string) => Promise<void>;
-		deleteConversation: (id: string) => Promise<void>;
-		updateTitle: (id: string, newTitle: string) => Promise<void>;
-		clearAll: () => Promise<void>;
-	};
 }
 
 const PANEL_GAP = 8;
@@ -116,7 +107,6 @@ export function Panel({
 	onClose,
 	onInteractionStateChange,
 	onNewChat,
-	historyCallbacks,
 }: PanelProps): React.ReactElement {
 	const className = `bili-agent-panel${isOpen ? " bili-agent-panel--open" : ""}`;
 	const [activeView, setActiveView] = useState<"chat" | "settings">("chat");
@@ -344,13 +334,17 @@ export function Panel({
 		[panelTransformOrigin, effectivePosition, size],
 	);
 
-	// P4: HistoryDropdown 已落地，移除 P3 占位 void
-	void historyCallbacks;
-
 	// 历史下拉展开/收起（点击 ☰ 按钮切换；点击下拉外部关闭）
 	const toggleHistory = useCallback(() => {
 		setIsHistoryOpen((prev) => !prev);
 	}, []);
+
+	// 切换到设置视图时收起历史下拉，避免返回聊天页时历史下拉自动重新出现
+	useEffect(() => {
+		if (isSettingsOpen) {
+			setIsHistoryOpen(false);
+		}
+	}, [isSettingsOpen]);
 
 	// 外部点击关闭历史下拉：监听 document pointerdown，若点击落在
 	// heading / history-dropdown / data-no-drag 区域之外则收起下拉
@@ -472,9 +466,9 @@ export function Panel({
 			>
 				<div
 					className="bili-agent-panel__heading"
+					role={isSettingsOpen ? undefined : "button"}
+					tabIndex={isSettingsOpen ? -1 : 0}
 					data-no-drag
-					role="button"
-					tabIndex={0}
 					aria-label={
 						isSettingsOpen
 							? "BiliGo"
@@ -485,9 +479,14 @@ export function Panel({
 					aria-expanded={!isSettingsOpen ? isHistoryOpen : undefined}
 					onClick={!isSettingsOpen ? toggleHistory : undefined}
 					onKeyDown={(e) => {
-						if (!isSettingsOpen && (e.key === "Enter" || e.key === " ")) {
+						// 聊天视图：Enter/Space 展开/收起，Escape 关闭已展开的历史下拉
+						if (isSettingsOpen) return;
+						if (e.key === "Enter" || e.key === " ") {
 							e.preventDefault();
 							toggleHistory();
+						} else if (e.key === "Escape" && isHistoryOpen) {
+							e.preventDefault();
+							setIsHistoryOpen(false);
 						}
 					}}
 				>

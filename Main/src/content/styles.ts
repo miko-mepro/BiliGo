@@ -8,6 +8,210 @@ const css = `
     all: initial;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
   }
+  /* ===== CSS 变量定义 - 浅色模式（默认） ===== */
+  [data-bili-agent-root],
+  .bili-agent-theme-light {
+    --bili-bg-white: #FFFFFF;
+    --bili-bg-soft: #F4F5F7;
+    --bili-bg-footer: #FAFBFC;
+    --bili-bg-disabled: #F6F7F8;
+    --bili-bg-think: #F8F9FA;
+    --bili-bg-step: #F1F2F3;
+    --bili-bg-pink-light: #FFF5F7;
+    --bili-bg-pink-lighter: #FFF8FA;
+    --bili-bg-pink-active: #FFF0F4;
+    --bili-bg-warning: #FFF7E6;
+    --bili-bg-error: #FFF1F0;
+    --bili-text-primary: #18191C;
+    --bili-text-secondary: #61666D;
+    --bili-text-muted: #9499A0;
+    --bili-text-dark: #212121;
+    --bili-text-system: #8B6914;
+    --bili-pink: #FB7299;
+    --bili-pink-dark: #F25D8E;
+    --bili-pink-light: #FB8DA0;
+    --bili-pink-mid: #F06E8A;
+    --bili-blue: #00A1D6;
+    --bili-blue-dark: #0091C2;
+    --bili-red: #FF6B81;
+    --bili-orange: #FA8C16;
+    --bili-green: #00A65A;
+    --bili-border: #E5E9EF;
+    --bili-border-error: #FFCCC7;
+    --bili-border-warning: #FFE7BA;
+    --bili-border-red: #FFCCD5;
+    --bili-tag-bg: #E3F6FF;
+    --bili-gray-light: #C9CCD0;
+    --bili-gray-mid: #B8BCC2;
+    --bili-pink-alpha-10: rgba(251, 114, 153, 0.1);
+    --bili-pink-alpha-15: rgba(251, 114, 153, 0.15);
+    --bili-pink-alpha-30: rgba(251, 114, 153, 0.3);
+    --bili-pink-alpha-35: rgba(251, 114, 153, 0.35);
+    --bili-pink-alpha-40: rgba(251, 114, 153, 0.4);
+    --bili-pink-alpha-45: rgba(251, 114, 153, 0.45);
+    --bili-pink-alpha-08: rgba(251, 114, 153, 0.08);
+    --bili-pink-alpha-25: rgba(251, 114, 153, 0.25);
+    --bili-pink-alpha-20: rgba(251, 114, 153, 0.2);
+    --bili-pink-alpha-16: rgba(251, 114, 153, 0.16);
+    --bili-pink-alpha-12: rgba(251, 114, 153, 0.12);
+    --bili-pink-alpha-18: rgba(251, 114, 153, 0.18);
+    --bili-pink-alpha-06: rgba(251, 114, 153, 0.06);
+    --bili-pink-alpha-0: rgba(251, 114, 153, 0);
+    --bili-blue-alpha-35: rgba(0, 161, 214, 0.35);
+    --bili-blue-alpha-25: rgba(0, 161, 214, 0.25);
+    --bili-black-alpha-04: rgba(0, 0, 0, 0.04);
+    --bili-black-alpha-06: rgba(0, 0, 0, 0.06);
+    --bili-black-alpha-08: rgba(0, 0, 0, 0.08);
+    --bili-black-alpha-10: rgba(0, 0, 0, 0.10);
+    --bili-black-alpha-12: rgba(0, 0, 0, 0.12);
+    --bili-black-alpha-15: rgba(0, 0, 0, 0.15);
+    --bili-black-alpha-75: rgba(0, 0, 0, 0.75);
+    --bili-black-alpha-0: rgba(0, 0, 0, 0);
+    --bili-white-alpha-15: rgba(255, 255, 255, 0.15);
+    --bili-white-alpha-25: rgba(255, 255, 255, 0.25);
+    --bili-white-alpha-30: rgba(255, 255, 255, 0.3);
+    --bili-white-alpha-50: rgba(255, 255, 255, 0.5);
+    --bili-white-alpha-80: rgba(255, 255, 255, 0.80);
+    --bili-white-alpha-90: rgba(255, 255, 255, 0.9);
+    --bili-red-alpha-06: rgba(255, 107, 129, 0.06);
+  }
+
+  /* ===== CSS 变量定义 - 深色模式 ===== */
+  .bili-agent-theme-dark {
+    --bili-bg-white: #1F1F1F;
+    --bili-bg-soft: #2A2A2A;
+    --bili-bg-footer: #252525;
+    --bili-bg-disabled: #2A2A2A;
+    --bili-bg-think: #2A2A2A;
+    --bili-bg-step: #2A2A2A;
+    --bili-bg-pink-light: #2D2228;
+    --bili-bg-pink-lighter: #2A2226;
+    --bili-bg-pink-active: #2D2228;
+    --bili-bg-warning: #3D3520;
+    --bili-bg-error: #3D2020;
+    --bili-text-primary: #E8E8E8;
+    --bili-text-secondary: #A0A0A0;
+    --bili-text-muted: #707070;
+    --bili-text-dark: #E8E8E8;
+    --bili-text-system: #D4A843;
+    --bili-pink: #FB7299;
+    --bili-pink-dark: #F25D8E;
+    --bili-pink-light: #C05070;
+    --bili-pink-mid: #A04060;
+    --bili-blue: #00A1D6;
+    --bili-blue-dark: #0091C2;
+    --bili-red: #FF6B81;
+    --bili-orange: #FA8C16;
+    --bili-green: #00A65A;
+    --bili-border: #3A3A3A;
+    --bili-border-error: #5A2A2A;
+    --bili-border-warning: #5A4A2A;
+    --bili-border-red: #5A2A32;
+    --bili-tag-bg: #1A3A4A;
+    --bili-gray-light: #4A4A4A;
+    --bili-gray-mid: #555555;
+    --bili-pink-alpha-10: rgba(251, 114, 153, 0.15);
+    --bili-pink-alpha-15: rgba(251, 114, 153, 0.2);
+    --bili-pink-alpha-30: rgba(251, 114, 153, 0.35);
+    --bili-pink-alpha-35: rgba(251, 114, 153, 0.4);
+    --bili-pink-alpha-40: rgba(251, 114, 153, 0.45);
+    --bili-pink-alpha-45: rgba(251, 114, 153, 0.5);
+    --bili-pink-alpha-08: rgba(251, 114, 153, 0.12);
+    --bili-pink-alpha-25: rgba(251, 114, 153, 0.3);
+    --bili-pink-alpha-20: rgba(251, 114, 153, 0.25);
+    --bili-pink-alpha-16: rgba(251, 114, 153, 0.2);
+    --bili-pink-alpha-12: rgba(251, 114, 153, 0.18);
+    --bili-pink-alpha-18: rgba(251, 114, 153, 0.22);
+    --bili-pink-alpha-06: rgba(251, 114, 153, 0.1);
+    --bili-pink-alpha-0: rgba(251, 114, 153, 0);
+    --bili-blue-alpha-35: rgba(0, 161, 214, 0.4);
+    --bili-blue-alpha-25: rgba(0, 161, 214, 0.3);
+    --bili-black-alpha-04: rgba(255, 255, 255, 0.04);
+    --bili-black-alpha-06: rgba(255, 255, 255, 0.06);
+    --bili-black-alpha-08: rgba(255, 255, 255, 0.08);
+    --bili-black-alpha-10: rgba(255, 255, 255, 0.10);
+    --bili-black-alpha-12: rgba(255, 255, 255, 0.12);
+    --bili-black-alpha-15: rgba(255, 255, 255, 0.15);
+    --bili-black-alpha-75: rgba(0, 0, 0, 0.75);
+    --bili-black-alpha-0: rgba(0, 0, 0, 0);
+    --bili-white-alpha-15: rgba(255, 255, 255, 0.15);
+    --bili-white-alpha-25: rgba(255, 255, 255, 0.25);
+    --bili-white-alpha-30: rgba(255, 255, 255, 0.3);
+    --bili-white-alpha-50: rgba(255, 255, 255, 0.5);
+    --bili-white-alpha-80: rgba(40, 40, 40, 0.80);
+    --bili-white-alpha-90: rgba(40, 40, 40, 0.9);
+    --bili-red-alpha-06: rgba(255, 107, 129, 0.08);
+  }
+
+  /* auto 模式：跟随系统深色主题 */
+  @media (prefers-color-scheme: dark) {
+    .bili-agent-theme-auto {
+      --bili-bg-white: #1F1F1F;
+      --bili-bg-soft: #2A2A2A;
+      --bili-bg-footer: #252525;
+      --bili-bg-disabled: #2A2A2A;
+      --bili-bg-think: #2A2A2A;
+      --bili-bg-step: #2A2A2A;
+      --bili-bg-pink-light: #2D2228;
+      --bili-bg-pink-lighter: #2A2226;
+      --bili-bg-pink-active: #2D2228;
+      --bili-bg-warning: #3D3520;
+      --bili-bg-error: #3D2020;
+      --bili-text-primary: #E8E8E8;
+      --bili-text-secondary: #A0A0A0;
+      --bili-text-muted: #707070;
+      --bili-text-dark: #E8E8E8;
+      --bili-text-system: #D4A843;
+      --bili-pink: #FB7299;
+      --bili-pink-dark: #F25D8E;
+      --bili-pink-light: #C05070;
+      --bili-pink-mid: #A04060;
+      --bili-blue: #00A1D6;
+      --bili-blue-dark: #0091C2;
+      --bili-red: #FF6B81;
+      --bili-orange: #FA8C16;
+      --bili-green: #00A65A;
+      --bili-border: #3A3A3A;
+      --bili-border-error: #5A2A2A;
+      --bili-border-warning: #5A4A2A;
+      --bili-border-red: #5A2A32;
+      --bili-tag-bg: #1A3A4A;
+      --bili-gray-light: #4A4A4A;
+      --bili-gray-mid: #555555;
+      --bili-pink-alpha-10: rgba(251, 114, 153, 0.15);
+      --bili-pink-alpha-15: rgba(251, 114, 153, 0.2);
+      --bili-pink-alpha-30: rgba(251, 114, 153, 0.35);
+      --bili-pink-alpha-35: rgba(251, 114, 153, 0.4);
+      --bili-pink-alpha-40: rgba(251, 114, 153, 0.45);
+      --bili-pink-alpha-45: rgba(251, 114, 153, 0.5);
+      --bili-pink-alpha-08: rgba(251, 114, 153, 0.12);
+      --bili-pink-alpha-25: rgba(251, 114, 153, 0.3);
+      --bili-pink-alpha-20: rgba(251, 114, 153, 0.25);
+      --bili-pink-alpha-16: rgba(251, 114, 153, 0.2);
+      --bili-pink-alpha-12: rgba(251, 114, 153, 0.18);
+      --bili-pink-alpha-18: rgba(251, 114, 153, 0.22);
+      --bili-pink-alpha-06: rgba(251, 114, 153, 0.1);
+      --bili-pink-alpha-0: rgba(251, 114, 153, 0);
+      --bili-blue-alpha-35: rgba(0, 161, 214, 0.4);
+      --bili-blue-alpha-25: rgba(0, 161, 214, 0.3);
+      --bili-black-alpha-04: rgba(255, 255, 255, 0.04);
+      --bili-black-alpha-06: rgba(255, 255, 255, 0.06);
+      --bili-black-alpha-08: rgba(255, 255, 255, 0.08);
+      --bili-black-alpha-10: rgba(255, 255, 255, 0.10);
+      --bili-black-alpha-12: rgba(255, 255, 255, 0.12);
+      --bili-black-alpha-15: rgba(255, 255, 255, 0.15);
+      --bili-black-alpha-75: rgba(0, 0, 0, 0.75);
+      --bili-black-alpha-0: rgba(0, 0, 0, 0);
+      --bili-white-alpha-15: rgba(255, 255, 255, 0.15);
+      --bili-white-alpha-25: rgba(255, 255, 255, 0.25);
+      --bili-white-alpha-30: rgba(255, 255, 255, 0.3);
+      --bili-white-alpha-50: rgba(255, 255, 255, 0.5);
+      --bili-white-alpha-80: rgba(40, 40, 40, 0.80);
+      --bili-white-alpha-90: rgba(40, 40, 40, 0.9);
+      --bili-red-alpha-06: rgba(255, 107, 129, 0.08);
+    }
+  }
+
 
   /* Toggle Button - 哔哩哔哩粉色风格 */
   .bili-agent-toggle {
@@ -20,15 +224,15 @@ const css = `
     height: 52px;
     border-radius: 50%;
     border: none;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 16px;
     font-weight: 600;
-    box-shadow: 0 4px 16px rgba(251, 114, 153, 0.35);
+    box-shadow: 0 4px 16px var(--bili-pink-alpha-35);
     transition: opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
     transform: translateY(-50%) scale(0.7);
     will-change: transform;
@@ -42,7 +246,7 @@ const css = `
   .bili-agent-toggle:hover {
     transform: translateY(-50%) scale(0.85);
     opacity: 1;
-    box-shadow: 0 6px 24px rgba(251, 114, 153, 0.45);
+    box-shadow: 0 6px 24px var(--bili-pink-alpha-45);
   }
 
   .bili-agent-toggle:active {
@@ -51,8 +255,8 @@ const css = `
 
   .bili-agent-toggle--open {
     display: none;
-    background: linear-gradient(135deg, #00A1D6 0%, #0091C2 100%);
-    box-shadow: 0 4px 16px rgba(0, 161, 214, 0.35);
+    background: linear-gradient(135deg, var(--bili-blue) 0%, var(--bili-blue-dark) 100%);
+    box-shadow: 0 4px 16px var(--bili-blue-alpha-35);
   }
 
   /* Panel - 哔哩哔哩风格面板 */
@@ -66,8 +270,8 @@ const css = `
     height: auto;
     max-height: calc(100vh - 80px);
     bottom: 40px;
-    background-color: #F4F5F7;
-    box-shadow: 0 0 0 rgba(251, 114, 153, 0);
+    background-color: var(--bili-bg-soft);
+    box-shadow: 0 0 0 var(--bili-pink-alpha-0);
     z-index: 10000;
     display: flex;
     flex-direction: column;
@@ -99,7 +303,7 @@ const css = `
     transform: translate3d(0, 0, 0) scale(1);
     clip-path: circle(150% at var(--bili-agent-panel-origin-x) var(--bili-agent-panel-origin-y));
     filter: blur(0) saturate(1);
-    box-shadow: -6px 0 32px rgba(0, 0, 0, 0.12), 0 0 36px rgba(251, 114, 153, 0.14);
+    box-shadow: -6px 0 32px var(--bili-black-alpha-12), 0 0 36px rgba(251, 114, 153, 0.14);
     transition:
       transform 0.34s cubic-bezier(0.16, 1, 0.3, 1),
       opacity 0.18s ease,
@@ -128,9 +332,10 @@ const css = `
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: linear-gradient(135deg, #FB8DA0 0%, #F06E8A 100%);
+    gap: 5px;
+    background: linear-gradient(135deg, var(--bili-pink-light) 0%, var(--bili-pink-mid) 100%);
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.15);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-15);
     position: relative;
   }
 
@@ -143,22 +348,33 @@ const css = `
     width: max-content;
     max-width: 50%;
     cursor: pointer;
+    margin-right: auto;
   }
 
   .bili-agent-panel__title {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
-    color: #FFFFFF;
+    color: var(--bili-bg-white);
     display: inline-flex;
     align-items: center;
     line-height: 0;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+  }
+
+  .bili-agent-panel__title svg,
+  .bili-agent-panel__title text {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
   }
 
   .bili-agent-panel__badge {
     font-size: 11px;
-    color: #FFFFFF;
-    background-color: rgba(255, 255, 255, 0.25);
+    color: var(--bili-bg-white);
+    background-color: var(--bili-white-alpha-25);
     padding: 3px 10px;
     border-radius: 12px;
     font-weight: 500;
@@ -169,10 +385,10 @@ const css = `
     width: 32px;
     min-width: 32px;
     height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--bili-white-alpha-30);
     border-radius: 16px;
-    background-color: rgba(255, 255, 255, 0.15);
-    color: #FFFFFF;
+    background-color: var(--bili-white-alpha-15);
+    color: var(--bili-bg-white);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -188,15 +404,15 @@ const css = `
 
   .bili-agent-panel__settings-button:hover,
   .bili-agent-panel__close-button:hover {
-    background-color: rgba(255, 255, 255, 0.25);
-    border-color: rgba(255, 255, 255, 0.5);
+    background-color: var(--bili-white-alpha-25);
+    border-color: var(--bili-white-alpha-50);
     transform: translateY(-1px);
   }
 
   .bili-agent-panel__settings-button--active {
-    background-color: #FFFFFF;
-    color: #FB7299;
-    border-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
+    color: var(--bili-pink);
+    border-color: var(--bili-bg-white);
   }
 
   .bili-agent-panel__settings-label {
@@ -216,38 +432,38 @@ const css = `
 
   .bili-agent-panel__search {
     padding: 12px 16px;
-    background-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
     border-radius: 20px;
-    border: 1px solid #E5E9EF;
-    color: #9499A0;
+    border: 1px solid var(--bili-border);
+    color: var(--bili-text-muted);
     font-size: 14px;
     cursor: text;
     user-select: none;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 2px 4px var(--bili-black-alpha-04);
   }
 
   .bili-agent-panel__welcome {
     padding: 14px 16px;
-    background: linear-gradient(135deg, #FFF5F7 0%, #FFF8FA 100%);
+    background: linear-gradient(135deg, var(--bili-bg-pink-light) 0%, var(--bili-bg-pink-lighter) 100%);
     border-radius: 12px;
-    border-left: 3px solid #FB7299;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.08);
+    border-left: 3px solid var(--bili-pink);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-08);
   }
 
   .bili-agent-panel__welcome-text {
     margin: 0;
     font-size: 13px;
-    color: #61666D;
+    color: var(--bili-text-secondary);
     line-height: 1.7;
   }
 
   /* Panel Footer */
   .bili-agent-panel__footer {
     padding: 12px 20px;
-    border-top: 1px solid #E5E9EF;
-    background-color: #FAFBFC;
+    border-top: 1px solid var(--bili-border);
+    background-color: var(--bili-bg-footer);
     font-size: 12px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     text-align: center;
     flex-shrink: 0;
     display: none;
@@ -268,8 +484,8 @@ const css = `
 
   .bili-agent-panel__input {
     padding: 12px 16px;
-    border-top: 1px solid #E5E9EF;
-    background-color: #FFFFFF;
+    border-top: 1px solid var(--bili-border);
+    background-color: var(--bili-bg-white);
     flex-shrink: 0;
   }
 
@@ -279,14 +495,14 @@ const css = `
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background-color: #F4F5F7;
+    background-color: var(--bili-bg-soft);
   }
 
   .bili-agent-settings__topbar {
     flex-shrink: 0;
     padding: 16px;
-    border-bottom: 1px solid #E5E9EF;
-    background-color: #FFFFFF;
+    border-bottom: 1px solid var(--bili-border);
+    background-color: var(--bili-bg-white);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -294,7 +510,7 @@ const css = `
 
   .bili-agent-settings__title {
     margin: 0;
-    color: #18191C;
+    color: var(--bili-text-primary);
     font-size: 16px;
     font-weight: 600;
     line-height: 1.4;
@@ -306,7 +522,7 @@ const css = `
     gap: 6px;
     padding: 4px;
     border-radius: 12px;
-    background-color: #F4F5F7;
+    background-color: var(--bili-bg-soft);
   }
 
   .bili-agent-settings__tab {
@@ -316,7 +532,7 @@ const css = `
     border: 0;
     border-radius: 10px;
     background-color: transparent;
-    color: #61666D;
+    color: var(--bili-text-secondary);
     cursor: pointer;
     font-family: inherit;
     font-size: 14px;
@@ -327,13 +543,13 @@ const css = `
   }
 
   .bili-agent-settings__tab:hover {
-    color: #FB7299;
+    color: var(--bili-pink);
   }
 
   .bili-agent-settings__tab--active {
-    background-color: #FFFFFF;
-    color: #FB7299;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    background-color: var(--bili-bg-white);
+    color: var(--bili-pink);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-08);
   }
 
   .bili-agent-settings__body {
@@ -350,10 +566,10 @@ const css = `
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
     padding: 16px;
     border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-04);
   }
 
   .bili-agent-settings__field {
@@ -366,17 +582,17 @@ const css = `
   .bili-agent-settings__toggle-label {
     font-size: 14px;
     font-weight: 500;
-    color: #18191C;
+    color: var(--bili-text-primary);
   }
 
   .bili-agent-settings__input {
     width: 100%;
     box-sizing: border-box;
     height: 38px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 8px;
-    background-color: #F4F5F7;
-    color: #18191C;
+    background-color: var(--bili-bg-soft);
+    color: var(--bili-text-primary);
     font-family: inherit;
     font-size: 14px;
     padding: 8px 12px;
@@ -385,14 +601,14 @@ const css = `
   }
 
   .bili-agent-settings__input:focus {
-    border-color: #FB7299;
-    background-color: #FFFFFF;
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    border-color: var(--bili-pink);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   .bili-agent-settings__input:disabled {
-    color: #9499A0;
-    background-color: #F6F7F8;
+    color: var(--bili-text-muted);
+    background-color: var(--bili-bg-disabled);
   }
 
   .bili-agent-settings__toggle {
@@ -407,18 +623,18 @@ const css = `
     width: 18px;
     height: 18px;
     margin: 0;
-    accent-color: #FB7299;
+    accent-color: var(--bili-pink);
     cursor: pointer;
   }
 
   .bili-agent-settings__status {
     min-height: 20px;
-    color: #00A65A;
+    color: var(--bili-green);
     font-size: 12px;
   }
 
   .bili-agent-settings__status--error {
-    color: #FF6B81;
+    color: var(--bili-red);
   }
 
   .bili-agent-settings__actions {
@@ -427,8 +643,8 @@ const css = `
     justify-content: flex-end;
     gap: 10px;
     padding: 14px 16px;
-    border-top: 1px solid #E5E9EF;
-    background-color: #FFFFFF;
+    border-top: 1px solid var(--bili-border);
+    background-color: var(--bili-bg-white);
     flex-shrink: 0;
   }
 
@@ -437,20 +653,20 @@ const css = `
     min-width: 80px;
     border: none;
     border-radius: 18px;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
     cursor: pointer;
     font-family: inherit;
     font-size: 14px;
     font-weight: 500;
     padding: 0 20px;
     transition: all 0.25s ease;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-30);
   }
 
   .bili-agent-settings__button:hover:not(:disabled) {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(251, 114, 153, 0.4);
+    box-shadow: 0 4px 12px var(--bili-pink-alpha-40);
   }
 
   .bili-agent-settings__button:active:not(:disabled) {
@@ -463,16 +679,16 @@ const css = `
   }
 
   .bili-agent-settings__button--secondary {
-    border: 1px solid #E5E9EF;
-    background: #FFFFFF;
-    color: #61666D;
+    border: 1px solid var(--bili-border);
+    background: var(--bili-bg-white);
+    color: var(--bili-text-secondary);
     box-shadow: none;
   }
 
   .bili-agent-settings__button--secondary:hover:not(:disabled) {
-    border-color: #FB7299;
-    color: #FB7299;
-    background-color: #FFF5F7;
+    border-color: var(--bili-pink);
+    color: var(--bili-pink);
+    background-color: var(--bili-bg-pink-light);
     box-shadow: none;
   }
 
@@ -493,26 +709,32 @@ const css = `
     justify-content: center;
     text-align: center;
     padding: 40px 20px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   .bili-agent-message-list__empty-icon {
     margin-bottom: 16px;
-    color: #E5E9EF;
+    color: var(--bili-border);
   }
 
   .bili-agent-message-list__empty-text {
     font-size: 16px;
     font-weight: 500;
-    color: #18191C;
+    color: var(--bili-text-primary);
     margin: 0 0 8px;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
   }
 
   .bili-agent-message-list__empty-hint {
     font-size: 13px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     margin: 0;
     line-height: 1.6;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
   }
 
   .bili-agent-message-list__messages {
@@ -547,20 +769,20 @@ const css = `
   }
 
   .bili-agent-message__avatar-icon--user {
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.25);
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-25);
   }
 
   .bili-agent-message__avatar-icon--assistant {
-    background: linear-gradient(135deg, #00A1D6 0%, #0091C2 100%);
-    color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(0, 161, 214, 0.25);
+    background: linear-gradient(135deg, var(--bili-blue) 0%, var(--bili-blue-dark) 100%);
+    color: var(--bili-bg-white);
+    box-shadow: 0 2px 8px var(--bili-blue-alpha-25);
   }
 
   .bili-agent-message__avatar-icon--system {
-    background-color: #FFF7E6;
-    color: #FA8C16;
+    background-color: var(--bili-bg-warning);
+    color: var(--bili-orange);
   }
 
   .bili-agent-message__content {
@@ -584,23 +806,23 @@ const css = `
   }
 
   .bili-agent-message--user .bili-agent-message__bubble {
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
     border-bottom-right-radius: 4px;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.2);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-20);
   }
 
   .bili-agent-message--assistant .bili-agent-message__bubble {
-    background-color: #FFFFFF;
-    color: #18191C;
+    background-color: var(--bili-bg-white);
+    color: var(--bili-text-primary);
     border-bottom-left-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-06);
   }
 
   .bili-agent-message--system .bili-agent-message__bubble {
-    background-color: #FFF7E6;
-    color: #8B6914;
-    border: 1px solid #FFE7BA;
+    background-color: var(--bili-bg-warning);
+    color: var(--bili-text-system);
+    border: 1px solid var(--bili-border-warning);
   }
 
   .bili-agent-message__text {
@@ -611,7 +833,7 @@ const css = `
 
   .bili-agent-message__time {
     font-size: 11px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   .bili-agent-message--user .bili-agent-message__time {
@@ -620,8 +842,8 @@ const css = `
 
   /* Thinking Process (collapsible) */
   .bili-agent-thinking {
-    background-color: #F8F9FA;
-    border: 1px solid #E5E9EF;
+    background-color: var(--bili-bg-think);
+    border: 1px solid var(--bili-border);
     border-radius: 12px;
     overflow: hidden;
   }
@@ -635,7 +857,7 @@ const css = `
     background: transparent;
     padding: 8px 12px;
     cursor: pointer;
-    color: #61666D;
+    color: var(--bili-text-secondary);
     font-family: inherit;
     font-size: 12px;
     line-height: 1.4;
@@ -643,8 +865,8 @@ const css = `
   }
 
   .bili-agent-thinking__toggle:hover {
-    background-color: #FFF5F7;
-    color: #FB7299;
+    background-color: var(--bili-bg-pink-light);
+    color: var(--bili-pink);
   }
 
   .bili-agent-thinking__caret {
@@ -669,14 +891,14 @@ const css = `
   .bili-agent-thinking__hint {
     margin-left: auto;
     flex-shrink: 0;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 11px;
   }
 
   .bili-agent-thinking__body {
     padding: 8px 12px 10px;
-    border-top: 1px dashed #E5E9EF;
-    color: #9499A0;
+    border-top: 1px dashed var(--bili-border);
+    color: var(--bili-text-muted);
     font-size: 12px;
     line-height: 1.7;
     white-space: pre-wrap;
@@ -700,15 +922,15 @@ const css = `
     max-width: 100%;
     padding: 5px 10px;
     border-radius: 10px;
-    background-color: #F1F2F3;
-    color: #61666D;
+    background-color: var(--bili-bg-step);
+    color: var(--bili-text-secondary);
     font-size: 12px;
     line-height: 1.4;
   }
 
   .bili-agent-message__step svg {
     flex-shrink: 0;
-    color: #FB7299;
+    color: var(--bili-pink);
   }
 
   /* Running Indicator (below assistant bubble) */
@@ -729,7 +951,7 @@ const css = `
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
     opacity: 0.25;
     animation: bili-agent-fade-pulse 1.2s ease-in-out infinite;
   }
@@ -743,7 +965,7 @@ const css = `
   }
 
   .bili-agent-running__label {
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 12px;
   }
 
@@ -769,28 +991,28 @@ const css = `
   }
 
   .bili-agent-chat-input__container:focus-within {
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   .bili-agent-chat-input__textarea {
     flex: 1;
     border: none;
-    background-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
     resize: none;
     outline: none;
     font-size: 14px;
     line-height: 1.6;
-    color: #18191C;
+    color: var(--bili-text-primary);
     max-height: 120px;
     min-height: 22px;
     font-family: inherit;
     padding: 8px 12px;
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-08);
   }
 
   .bili-agent-chat-input__textarea::placeholder {
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   .bili-agent-chat-input__textarea:disabled {
@@ -802,20 +1024,20 @@ const css = `
     height: 36px;
     border-radius: 50%;
     border: none;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
     transition: all 0.25s ease;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-30);
   }
 
   .bili-agent-chat-input__send:hover:not(:disabled) {
     transform: scale(1.1);
-    box-shadow: 0 4px 12px rgba(251, 114, 153, 0.4);
+    box-shadow: 0 4px 12px var(--bili-pink-alpha-40);
   }
 
   .bili-agent-chat-input__send:active:not(:disabled) {
@@ -823,13 +1045,13 @@ const css = `
   }
 
   .bili-agent-chat-input__send:disabled {
-    background: linear-gradient(135deg, #C9CCD0 0%, #B8BCC2 100%);
+    background: linear-gradient(135deg, var(--bili-gray-light) 0%, var(--bili-gray-mid) 100%);
     cursor: not-allowed;
     box-shadow: none;
   }
 
   .bili-agent-chat-input__send--stop {
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
   }
 
   .bili-agent-chat-input__stop-icon {
@@ -837,7 +1059,7 @@ const css = `
     width: 12px;
     height: 12px;
     border-radius: 3px;
-    background-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
   }
 
   /* Error Display - 哔哩哔哩错误提示 */
@@ -863,15 +1085,15 @@ const css = `
   }
 
   .bili-agent-error--rate-limit {
-    background-color: #FFF7E6;
-    border: 1px solid #FFE7BA;
-    color: #FA8C16;
+    background-color: var(--bili-bg-warning);
+    border: 1px solid var(--bili-border-warning);
+    color: var(--bili-orange);
   }
 
   .bili-agent-error--network {
-    background-color: #FFF1F0;
-    border: 1px solid #FFCCC7;
-    color: #FF6B81;
+    background-color: var(--bili-bg-error);
+    border: 1px solid var(--bili-border-error);
+    color: var(--bili-red);
   }
 
   .bili-agent-error__icon {
@@ -916,14 +1138,14 @@ const css = `
   }
 
   .bili-agent-error--rate-limit .bili-agent-error__retry {
-    background-color: #FA8C16;
-    color: #FFFFFF;
+    background-color: var(--bili-orange);
+    color: var(--bili-bg-white);
     opacity: 1;
   }
 
   .bili-agent-error--network .bili-agent-error__retry {
-    background-color: #FF6B81;
-    color: #FFFFFF;
+    background-color: var(--bili-red);
+    color: var(--bili-bg-white);
     opacity: 1;
   }
 
@@ -949,7 +1171,7 @@ const css = `
 
   .bili-agent-error__dismiss:hover {
     opacity: 1;
-    background-color: rgba(0, 0, 0, 0.06);
+    background-color: var(--bili-black-alpha-06);
   }
 
   /* Video Card - 哔哩哔哩视频卡片 */
@@ -965,18 +1187,18 @@ const css = `
     text-align: left;
     border-radius: 12px;
     overflow: hidden;
-    background-color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-06);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .bili-agent-video-card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 6px 20px rgba(251, 114, 153, 0.15);
+    box-shadow: 0 6px 20px var(--bili-pink-alpha-15);
   }
 
   .bili-agent-video-card:focus {
-    outline: 2px solid #FB7299;
+    outline: 2px solid var(--bili-pink);
     outline-offset: 2px;
   }
 
@@ -985,7 +1207,7 @@ const css = `
     width: 100%;
     aspect-ratio: 16 / 10;
     overflow: hidden;
-    background-color: #E5E9EF;
+    background-color: var(--bili-border);
   }
 
   .bili-agent-video-card__cover-img {
@@ -1006,8 +1228,8 @@ const css = `
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #F4F5F7 0%, #E5E9EF 100%);
-    color: #9499A0;
+    background: linear-gradient(135deg, var(--bili-bg-soft) 0%, var(--bili-border) 100%);
+    color: var(--bili-text-muted);
     font-size: 14px;
   }
 
@@ -1015,8 +1237,8 @@ const css = `
     position: absolute;
     bottom: 8px;
     right: 8px;
-    background-color: rgba(0, 0, 0, 0.75);
-    color: #FFFFFF;
+    background-color: var(--bili-black-alpha-75);
+    color: var(--bili-bg-white);
     font-size: 12px;
     padding: 3px 8px;
     border-radius: 4px;
@@ -1035,7 +1257,7 @@ const css = `
     margin: 0;
     font-size: 14px;
     font-weight: 500;
-    color: #18191C;
+    color: var(--bili-text-primary);
     line-height: 1.5;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -1046,7 +1268,7 @@ const css = `
   }
 
   .bili-agent-video-card__title strong {
-    color: #FB7299;
+    color: var(--bili-pink);
     font-weight: 600;
   }
 
@@ -1058,7 +1280,7 @@ const css = `
 
   .bili-agent-video-card__author {
     font-size: 12px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   .bili-agent-video-card__stats {
@@ -1072,7 +1294,7 @@ const css = `
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   .bili-agent-video-card__stat svg {
@@ -1104,17 +1326,17 @@ const css = `
 
   .bili-agent-filter-sort__label {
     font-size: 13px;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     white-space: nowrap;
   }
 
   .bili-agent-filter-sort__select {
     padding: 6px 12px;
     font-size: 13px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 8px;
-    background-color: #FFFFFF;
-    color: #18191C;
+    background-color: var(--bili-bg-white);
+    color: var(--bili-text-primary);
     cursor: pointer;
     outline: none;
     font-family: inherit;
@@ -1122,20 +1344,20 @@ const css = `
   }
 
   .bili-agent-filter-sort__select:hover {
-    border-color: #FB7299;
-    background-color: #FFF5F7;
+    border-color: var(--bili-pink);
+    background-color: var(--bili-bg-pink-light);
   }
 
   .bili-agent-filter-sort__select:focus {
-    border-color: #FB7299;
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    border-color: var(--bili-pink);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   /* No Results Message */
   .bili-agent-message-list__no-results {
     padding: 32px 16px;
     text-align: center;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 14px;
   }
 
@@ -1155,10 +1377,10 @@ const css = `
     width: 100%;
     box-sizing: border-box;
     height: 38px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 8px;
-    background-color: #F4F5F7;
-    color: #18191C;
+    background-color: var(--bili-bg-soft);
+    color: var(--bili-text-primary);
     font-family: inherit;
     font-size: 14px;
     padding: 8px 12px;
@@ -1169,9 +1391,9 @@ const css = `
 
   .bili-agent-model-settings__active-selector:hover,
   .bili-agent-model-settings__active-selector:focus {
-    border-color: #FB7299;
-    background-color: #FFFFFF;
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    border-color: var(--bili-pink);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   .bili-agent-model-settings__provider-grid {
@@ -1185,28 +1407,28 @@ const css = `
     flex-direction: column;
     gap: 14px;
     padding: 14px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 12px;
-    background-color: #F4F5F7;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    background-color: var(--bili-bg-soft);
+    box-shadow: 0 2px 8px var(--bili-black-alpha-04);
     transition: all 0.25s ease;
   }
 
   .bili-agent-model-settings__provider-card--active {
-    border-color: #FB7299;
-    background: linear-gradient(135deg, #FFF5F7 0%, #FFFFFF 100%);
-    box-shadow: 0 4px 14px rgba(251, 114, 153, 0.16);
+    border-color: var(--bili-pink);
+    background: linear-gradient(135deg, var(--bili-bg-pink-light) 0%, var(--bili-bg-white) 100%);
+    box-shadow: 0 4px 14px var(--bili-pink-alpha-16);
   }
 
   .bili-agent-model-settings__provider-card--custom {
     border-style: dashed;
-    background-color: #FFFFFF;
+    background-color: var(--bili-bg-white);
   }
 
   .bili-agent-model-settings__provider-card:hover {
-    border-color: #FB7299;
-    background-color: #FFFFFF;
-    box-shadow: 0 4px 12px rgba(251, 114, 153, 0.12);
+    border-color: var(--bili-pink);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 4px 12px var(--bili-pink-alpha-12);
     transform: translateY(-1px);
   }
 
@@ -1225,7 +1447,7 @@ const css = `
   }
 
   .bili-agent-model-settings__provider-content:focus {
-    outline: 2px solid #FB7299;
+    outline: 2px solid var(--bili-pink);
     outline-offset: 2px;
     border-radius: 8px;
   }
@@ -1240,7 +1462,7 @@ const css = `
 
   .bili-agent-model-settings__provider-name {
     min-width: 0;
-    color: #18191C;
+    color: var(--bili-text-primary);
     font-size: 14px;
     font-weight: 600;
     line-height: 1.4;
@@ -1252,8 +1474,8 @@ const css = `
   .bili-agent-model-settings__provider-format {
     flex-shrink: 0;
     border-radius: 12px;
-    background-color: #E3F6FF;
-    color: #00A1D6;
+    background-color: var(--bili-tag-bg);
+    color: var(--bili-blue);
     font-size: 11px;
     font-weight: 600;
     line-height: 1;
@@ -1261,7 +1483,7 @@ const css = `
   }
 
   .bili-agent-model-settings__provider-model {
-    color: #61666D;
+    color: var(--bili-text-secondary);
     font-size: 12px;
     line-height: 1.5;
     overflow: hidden;
@@ -1277,7 +1499,7 @@ const css = `
   }
 
   .bili-agent-model-settings__provider-status {
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 12px;
     line-height: 1.4;
   }
@@ -1285,10 +1507,10 @@ const css = `
   .bili-agent-model-settings__provider-delete {
     align-self: flex-end;
     height: 28px;
-    border: 1px solid #FFCCD5;
+    border: 1px solid var(--bili-border-red);
     border-radius: 14px;
-    background-color: #FFF1F0;
-    color: #FF6B81;
+    background-color: var(--bili-bg-error);
+    color: var(--bili-red);
     cursor: pointer;
     font-family: inherit;
     font-size: 12px;
@@ -1298,8 +1520,8 @@ const css = `
   }
 
   .bili-agent-model-settings__provider-delete:hover {
-    background-color: #FFFFFF;
-    border-color: #FF6B81;
+    background-color: var(--bili-bg-white);
+    border-color: var(--bili-red);
   }
 
   .bili-agent-model-settings__field {
@@ -1322,26 +1544,26 @@ const css = `
 
   .bili-agent-model-settings__add-custom-btn {
     width: 100%;
-    border: 1px dashed #FB7299;
-    background-color: #FFF5F7;
-    color: #FB7299;
+    border: 1px dashed var(--bili-pink);
+    background-color: var(--bili-bg-pink-light);
+    color: var(--bili-pink);
   }
 
   .bili-agent-model-settings__add-custom-btn:hover:not(:disabled) {
-    background-color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.18);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-18);
     transform: translateY(-1px);
   }
 
   .bili-agent-model-settings__test-btn {
     border: none;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-30);
   }
 
   .bili-agent-model-settings__test-btn:hover:not(:disabled) {
-    box-shadow: 0 4px 12px rgba(251, 114, 153, 0.4);
+    box-shadow: 0 4px 12px var(--bili-pink-alpha-40);
     transform: translateY(-2px);
   }
 
@@ -1364,11 +1586,11 @@ const css = `
   }
 
   .bili-agent-model-settings__test-result--ok {
-    color: #00A65A;
+    color: var(--bili-green);
   }
 
   .bili-agent-model-settings__test-result--fail {
-    color: #FF6B81;
+    color: var(--bili-red);
   }
 
   /* Custom Dropdown - 自定义提供商下拉 */
@@ -1392,10 +1614,10 @@ const css = `
     width: 100%;
     box-sizing: border-box;
     height: 38px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 8px;
-    background-color: #F4F5F7;
-    color: #18191C;
+    background-color: var(--bili-bg-soft);
+    color: var(--bili-text-primary);
     font-family: inherit;
     font-size: 14px;
     padding: 0 12px;
@@ -1411,9 +1633,9 @@ const css = `
   .bili-agent-model-settings__custom-dropdown-trigger:hover,
   .bili-agent-model-settings__custom-dropdown-trigger:focus,
   .bili-agent-model-settings__custom-dropdown-trigger[aria-expanded="true"] {
-    border-color: #FB7299;
-    background-color: #FFFFFF;
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    border-color: var(--bili-pink);
+    background-color: var(--bili-bg-white);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   .bili-agent-model-settings__custom-dropdown-trigger-text {
@@ -1427,7 +1649,7 @@ const css = `
 
   .bili-agent-model-settings__custom-dropdown-trigger-caret {
     flex-shrink: 0;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 12px;
     line-height: 1;
   }
@@ -1440,10 +1662,10 @@ const css = `
     margin: 0;
     padding: 4px;
     list-style: none;
-    background-color: #FFFFFF;
-    border: 1px solid #E5E9EF;
+    background-color: var(--bili-bg-white);
+    border: 1px solid var(--bili-border);
     border-radius: 8px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 6px 20px var(--bili-black-alpha-12);
     z-index: 10002;
     max-height: 280px;
     overflow-y: auto;
@@ -1458,15 +1680,15 @@ const css = `
   }
 
   .bili-agent-model-settings__custom-dropdown-item:hover {
-    background-color: #FFF5F7;
+    background-color: var(--bili-bg-pink-light);
   }
 
   .bili-agent-model-settings__custom-dropdown-item--active {
-    background-color: #FFF0F4;
+    background-color: var(--bili-bg-pink-active);
   }
 
   .bili-agent-model-settings__custom-dropdown-item--active .bili-agent-model-settings__custom-dropdown-item-name {
-    color: #FB7299;
+    color: var(--bili-pink);
     font-weight: 600;
   }
 
@@ -1476,7 +1698,7 @@ const css = `
     height: 34px;
     border: 0;
     background: transparent;
-    color: #18191C;
+    color: var(--bili-text-primary);
     font-family: inherit;
     font-size: 14px;
     padding: 0 10px;
@@ -1497,7 +1719,7 @@ const css = `
     height: 34px;
     border: 0;
     background: transparent;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-size: 16px;
     line-height: 1;
     cursor: pointer;
@@ -1508,14 +1730,14 @@ const css = `
   }
 
   .bili-agent-model-settings__custom-dropdown-item-delete:hover {
-    color: #FF6B81;
-    background-color: #FFF1F0;
+    color: var(--bili-red);
+    background-color: var(--bili-bg-error);
   }
 
   .bili-agent-model-settings__custom-divider {
     height: 1px;
     margin: 4px 6px;
-    background-color: #E5E9EF;
+    background-color: var(--bili-border);
     list-style: none;
   }
 
@@ -1525,8 +1747,8 @@ const css = `
     height: 38px;
     border-radius: 50%;
     border: none;
-    background: linear-gradient(135deg, #FB7299 0%, #F25D8E 100%);
-    color: #FFFFFF;
+    background: linear-gradient(135deg, var(--bili-pink) 0%, var(--bili-pink-dark) 100%);
+    color: var(--bili-bg-white);
     font-size: 20px;
     font-weight: 400;
     line-height: 1;
@@ -1534,14 +1756,14 @@ const css = `
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+    box-shadow: 0 2px 8px var(--bili-pink-alpha-30);
     transition: all 0.25s ease;
     padding: 0;
   }
 
   .bili-agent-model-settings__add-btn:hover {
     transform: translateY(-1px) scale(1.05);
-    box-shadow: 0 4px 12px rgba(251, 114, 153, 0.4);
+    box-shadow: 0 4px 12px var(--bili-pink-alpha-40);
   }
 
   .bili-agent-model-settings__add-btn:active {
@@ -1555,10 +1777,10 @@ const css = `
     width: 32px;
     min-width: 32px;
     height: 32px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--bili-white-alpha-30);
     border-radius: 16px;
-    background-color: rgba(255, 255, 255, 0.15);
-    color: #FFFFFF;
+    background-color: var(--bili-white-alpha-15);
+    color: var(--bili-bg-white);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1570,14 +1792,14 @@ const css = `
   }
 
   .bili-agent-panel__new-chat-button:hover {
-    background-color: rgba(255, 255, 255, 0.25);
-    border-color: rgba(255, 255, 255, 0.5);
+    background-color: var(--bili-white-alpha-25);
+    border-color: var(--bili-white-alpha-50);
     transform: translateY(-1px);
   }
 
   /* ▼/▲ 展开图标（视觉指示器） */
   .bili-agent-panel__history-toggle {
-    color: #FFFFFF;
+    color: var(--bili-bg-white);
     cursor: pointer;
     padding: 6px;
     display: inline-flex;
@@ -1613,12 +1835,12 @@ const css = `
     max-height: 360px;
     overflow-y: auto;
     z-index: 5;
-    background-color: rgba(255, 255, 255, 0.80);
+    background-color: var(--bili-white-alpha-80);
     backdrop-filter: blur(20px) saturate(1.4);
     -webkit-backdrop-filter: blur(20px) saturate(1.4);
     border-radius: 6px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15),
-                0 4px 12px rgba(0, 0, 0, 0.10);
+    box-shadow: 0 12px 40px var(--bili-black-alpha-15),
+                0 4px 12px var(--bili-black-alpha-10);
     animation: bili-agent-history-slide-down 0.2s ease-out;
   }
 
@@ -1633,18 +1855,18 @@ const css = `
     align-items: center;
     padding: 10px 16px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+    border-bottom: 1px solid var(--bili-black-alpha-04);
     transition: background-color 0.15s ease;
   }
 
   .bili-agent-history-item:hover {
-    background-color: rgba(251, 114, 153, 0.06);
+    background-color: var(--bili-pink-alpha-06);
   }
 
   .bili-agent-history-item:focus-visible {
-    outline: 2px solid #FB7299;
+    outline: 2px solid var(--bili-pink);
     outline-offset: -2px;
-    background-color: rgba(251, 114, 153, 0.08);
+    background-color: var(--bili-pink-alpha-08);
   }
 
   .bili-agent-history-item__content {
@@ -1656,7 +1878,7 @@ const css = `
   .bili-agent-history-item__title {
     font-size: 14px;
     font-weight: 500;
-    color: #212121;
+    color: var(--bili-text-dark);
     white-space: nowrap;
     overflow: hidden;
     mask-image: linear-gradient(to right, black calc(100% - 40px), transparent 100%);
@@ -1674,7 +1896,7 @@ const css = `
 
   .bili-agent-history-item__meta {
     font-size: 12px;
-    color: #999;
+    color: var(--bili-text-muted);
     margin-top: 2px;
   }
 
@@ -1693,7 +1915,7 @@ const css = `
     height: 24px;
     border: none;
     background: none;
-    color: #999;
+    color: var(--bili-text-muted);
     cursor: pointer;
     flex-shrink: 0;
     padding: 0;
@@ -1714,26 +1936,26 @@ const css = `
 
   .bili-agent-history-item__rename:hover,
   .bili-agent-history-item__delete:hover {
-    color: #FB7299;
+    color: var(--bili-pink);
   }
 
   .bili-agent-history-item__rename-input {
     font-size: 14px;
     font-weight: 500;
-    color: #212121;
-    border: 1px solid #FB7299;
+    color: var(--bili-text-dark);
+    border: 1px solid var(--bili-pink);
     border-radius: 4px;
     padding: 2px 6px;
     width: 100%;
     outline: none;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--bili-white-alpha-90);
   }
 
   /* 空状态 */
   .bili-agent-history-empty {
     padding: 32px 16px;
     text-align: center;
-    color: #999;
+    color: var(--bili-text-muted);
     font-size: 13px;
   }
 
@@ -1743,10 +1965,10 @@ const css = `
     margin: 8px 12px;
     box-sizing: border-box;
     height: 30px;
-    border: 1px solid #E5E9EF;
+    border: 1px solid var(--bili-border);
     border-radius: 15px;
-    background-color: rgba(255, 255, 255, 0.9);
-    color: #18191C;
+    background-color: var(--bili-white-alpha-90);
+    color: var(--bili-text-primary);
     font-family: inherit;
     font-size: 13px;
     padding: 0 14px;
@@ -1755,12 +1977,12 @@ const css = `
   }
 
   .bili-agent-history-search:focus {
-    border-color: #FB7299;
-    box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+    border-color: var(--bili-pink);
+    box-shadow: 0 0 0 3px var(--bili-pink-alpha-10);
   }
 
   .bili-agent-history-search::placeholder {
-    color: #9499A0;
+    color: var(--bili-text-muted);
   }
 
   /* 历史清空全部按钮 */
@@ -1772,7 +1994,7 @@ const css = `
     border: none;
     border-radius: 8px;
     background-color: transparent;
-    color: #9499A0;
+    color: var(--bili-text-muted);
     font-family: inherit;
     font-size: 13px;
     cursor: pointer;
@@ -1780,8 +2002,8 @@ const css = `
   }
 
   .bili-agent-history-clear-all:hover {
-    color: #FF6B81;
-    background-color: rgba(255, 107, 129, 0.06);
+    color: var(--bili-red);
+    background-color: var(--bili-red-alpha-06);
   }
 `;
 

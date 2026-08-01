@@ -256,12 +256,12 @@ export function SettingsPanel({
 		overflowY: "auto",
 		display: "flex",
 		flexDirection: "column",
-		background: "#fff",
+		background: "var(--bili-bg-white)",
 		pointerEvents: "auto",
 	};
 	const headerStyle: CSSProperties = {
 		padding: "10px 16px",
-		borderBottom: "1px solid #eee",
+		borderBottom: "1px solid var(--bili-border)",
 		fontWeight: 600,
 		display: "flex",
 		justifyContent: "space-between",
@@ -272,12 +272,12 @@ export function SettingsPanel({
 		border: "none",
 		fontSize: 18,
 		cursor: "pointer",
-		color: "#666",
+		color: "var(--bili-text-secondary)",
 		padding: "0 6px",
 	};
 	const tabBarStyle: CSSProperties = {
 		display: "flex",
-		borderBottom: "1px solid #eee",
+		borderBottom: "1px solid var(--bili-border)",
 	};
 	const tabBtnBase: CSSProperties = {
 		flex: 1,
@@ -289,14 +289,14 @@ export function SettingsPanel({
 	};
 	const tabBtnActive: CSSProperties = {
 		...tabBtnBase,
-		borderBottom: "2px solid #FB7299",
-		color: "#FB7299",
+		borderBottom: "2px solid var(--bili-pink)",
+		color: "var(--bili-pink)",
 		fontWeight: 600,
 	};
 	const tabBtnInactive: CSSProperties = {
 		...tabBtnBase,
 		borderBottom: "2px solid transparent",
-		color: "#666",
+		color: "var(--bili-text-secondary)",
 	};
 	const formStyle: CSSProperties = {
 		padding: 16,
@@ -311,11 +311,11 @@ export function SettingsPanel({
 	};
 	const labelStyle: CSSProperties = {
 		fontSize: 13,
-		color: "#333",
+		color: "var(--bili-text-primary)",
 	};
 	const inputStyle: CSSProperties = {
 		padding: "6px 8px",
-		border: "1px solid #ddd",
+		border: "1px solid var(--bili-border)",
 		borderRadius: 4,
 		fontSize: 13,
 		width: "100%",
@@ -328,8 +328,8 @@ export function SettingsPanel({
 	};
 	const saveBtnStyle: CSSProperties = {
 		padding: "6px 14px",
-		background: saveStatus === "saving" ? "#ccc" : "#FB7299",
-		color: "#fff",
+		background: saveStatus === "saving" ? "var(--bili-gray-mid)" : "var(--bili-pink)",
+		color: "var(--bili-bg-white)",
 		border: "none",
 		borderRadius: 6,
 		cursor: saveStatus === "saving" ? "not-allowed" : "pointer",
@@ -337,9 +337,9 @@ export function SettingsPanel({
 	};
 	const closeFooterBtnStyle: CSSProperties = {
 		padding: "6px 14px",
-		background: "#f0f0f0",
-		color: "#333",
-		border: "1px solid #ddd",
+		background: "var(--bili-bg-soft)",
+		color: "var(--bili-text-primary)",
+		border: "1px solid var(--bili-border)",
 		borderRadius: 6,
 		cursor: "pointer",
 		fontSize: 13,
@@ -347,7 +347,7 @@ export function SettingsPanel({
 	const savedHintStyle: CSSProperties = {
 		fontSize: 12,
 		marginLeft: "auto",
-		color: saveStatus === "error" ? "#e53935" : "#4caf50",
+		color: saveStatus === "error" ? "var(--bili-red)" : "var(--bili-green)",
 	};
 
 	// 保存按钮文案根据三态反馈切换
@@ -451,11 +451,11 @@ export function SettingsPanel({
 							style={{
 								marginTop: 16,
 								padding: "8px 10px",
-								background: "#fff8e1",
-								border: "1px solid #ffe082",
+								background: "var(--bili-bg-warning)",
+								border: "1px solid var(--bili-border-warning)",
 								borderRadius: 4,
 								fontSize: 11,
-								color: "#795548",
+								color: "var(--bili-text-system)",
 								lineHeight: 1.5,
 							}}
 							role="note"
