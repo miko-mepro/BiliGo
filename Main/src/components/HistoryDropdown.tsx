@@ -211,12 +211,24 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
 
   if (!isOpen) return null
 
+  // 渲染层防御性兜底（R-1）：上游 store.ts / sync.ts 已接入 sanitizeHistoryIndex 校验，
+  // 此处是最终保险——即使未来新增数据入口忘记接入校验，也不会在 render 阶段崩溃。
+  //
+  // 注意这里统一归一化整条记录的 title，而非只在搜索过滤处加 typeof 保护，
+  // 因为非字符串 title 在本组件有两条独立的崩溃路径：
+  //   1) 搜索过滤调用 r.title.toLowerCase() → TypeError（需输入搜索词才触发）
+  //   2) <TitleWithScroll text={item.title} /> 渲染对象 title
+  //      → "Objects are not valid as a React child"（打开下拉即触发，无需搜索）
+  // 归一化后，下游的 TitleWithScroll、handleRenameStart 等消费点全部拿到字符串。
+  const safeRecords = records.map((r) =>
+    typeof r.title === 'string' ? r : { ...r, title: '' },
+  )
+
   // 搜索过滤：匹配标题（大小写不敏感）
-  const filtered = searchQuery.trim()
-    ? records.filter((r) =>
-        r.title.toLowerCase().includes(searchQuery.trim().toLowerCase()),
-      )
-    : records
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const filtered = normalizedQuery
+    ? safeRecords.filter((r) => r.title.toLowerCase().includes(normalizedQuery))
+    : safeRecords
 
   return (
     <div className="bili-agent-history-dropdown" role="listbox" aria-label="历史对话列表" data-no-drag>

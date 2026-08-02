@@ -11,6 +11,7 @@ import type {
   QueryExpandResult,
   RerankResult,
 } from '../../lib/shared-types/index.js';
+import { sanitizeHistoryIndex } from './validate.js';
 
 // 存储 Key 定义（逐字契约，不可修改）
 const INDEX_KEY = 'bili-agent-history-index';
@@ -55,14 +56,17 @@ export interface SaveableConversation {
 
 /**
  * 读取历史索引。存储损坏（非数组）时返回空数组，保证调用方安全。
+ *
+ * 数据入口校验（R-1）：chrome.storage.local 的实际存储值不受 TypeScript 约束，
+ * 旧版本写入、外部扩展同步或存储损坏都可能产生 title 非字符串的脏数据。
+ * 原实现的 `value as ConversationRecord[]` 强制断言会让脏数据一路流到渲染层，
+ * 在 HistoryDropdown 搜索过滤调用 r.title.toLowerCase() 时抛出 TypeError。
+ * 此处改为交给 sanitizeHistoryIndex 逐字段校验，与 sync.ts 的跨标签页同步路径
+ * 共用同一套规则。
  */
 export async function getHistoryIndex(): Promise<ConversationRecord[]> {
   const result = await chrome.storage.local.get(INDEX_KEY);
-  const value = result[INDEX_KEY];
-  if (Array.isArray(value)) {
-    return value as ConversationRecord[];
-  }
-  return [];
+  return sanitizeHistoryIndex(result[INDEX_KEY]);
 }
 
 /**

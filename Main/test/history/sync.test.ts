@@ -136,6 +136,74 @@ describe('HistorySync', () => {
       );
       expect(callback).toHaveBeenCalledTimes(1);
     });
+
+    // R-1：跨标签页同步入口必须与本地读取入口复用同一套 sanitizeHistoryIndex 校验，
+    // 否则外部标签页写入的脏数据仍能绕过校验进入本地状态并触发渲染崩溃
+    describe('数据入口校验（R-1）', () => {
+      it('title 为 null 时回调收到降级后的空字符串', () => {
+        sync.start(callback as unknown as (index: ConversationRecord[]) => void);
+        registeredListener!(
+          {
+            [INDEX_KEY]: {
+              newValue: [
+                { id: 'c1', title: null, titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+              ],
+            },
+            [SYNC_ID_KEY]: { newValue: 'other-write-id' },
+          },
+          'local',
+        );
+        const received = callback.mock.calls[0][0] as ConversationRecord[];
+        expect(received).toHaveLength(1);
+        expect(received[0].title).toBe('');
+        expect(() => received[0].title.toLowerCase()).not.toThrow();
+      });
+
+      it('id 非法的记录被丢弃，有效记录保留', () => {
+        sync.start(callback as unknown as (index: ConversationRecord[]) => void);
+        registeredListener!(
+          {
+            [INDEX_KEY]: {
+              newValue: [
+                { id: '', title: 'dropped', titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+                makeRecord('c2'),
+              ],
+            },
+            [SYNC_ID_KEY]: { newValue: 'other-write-id' },
+          },
+          'local',
+        );
+        const received = callback.mock.calls[0][0] as ConversationRecord[];
+        expect(received).toHaveLength(1);
+        expect(received[0].id).toBe('c2');
+      });
+
+      it('newValue 为非数组（存储损坏）时回调收到空数组', () => {
+        sync.start(callback as unknown as (index: ConversationRecord[]) => void);
+        registeredListener!(
+          {
+            [INDEX_KEY]: { newValue: 'not-an-array' },
+            [SYNC_ID_KEY]: { newValue: 'other-write-id' },
+          },
+          'local',
+        );
+        expect(callback).toHaveBeenCalledWith([]);
+      });
+
+      it('数组内的非对象元素被丢弃', () => {
+        sync.start(callback as unknown as (index: ConversationRecord[]) => void);
+        registeredListener!(
+          {
+            [INDEX_KEY]: { newValue: [null, 'garbage', makeRecord('c1')] },
+            [SYNC_ID_KEY]: { newValue: 'other-write-id' },
+          },
+          'local',
+        );
+        const received = callback.mock.calls[0][0] as ConversationRecord[];
+        expect(received).toHaveLength(1);
+        expect(received[0].id).toBe('c1');
+      });
+    });
   });
 
   describe('stop', () => {

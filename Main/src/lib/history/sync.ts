@@ -3,6 +3,7 @@
 // 设计依据 3.4 §7：每次写入生成唯一 syncId，写入后 200ms pending TTL 内忽略相同 syncId 的事件，
 // 避免自身写入触发自身回调导致重复刷新。
 import type { ConversationRecord } from '../../lib/shared-types/index.js';
+import { sanitizeHistoryIndex } from './validate.js';
 
 const INDEX_KEY = 'bili-agent-history-index';
 // 旧实现用独立 key 承载 syncId（非嵌入 index 数组的 __syncId 方案），保持该方案。
@@ -49,10 +50,11 @@ export class HistorySync {
         return;
       }
 
-      const raw = changes[INDEX_KEY].newValue;
-      const newIndex: ConversationRecord[] = Array.isArray(raw)
-        ? (raw as ConversationRecord[])
-        : [];
+      // 数据入口校验（R-1）：外部标签页写入的脏数据会经由本回调进入本地状态。
+      // 与 store.ts 的 getHistoryIndex 复用同一个 sanitizeHistoryIndex，
+      // 保证「本地读取」与「跨标签页同步」两条链路的校验规则完全一致，
+      // 避免仅修其中一条导致脏数据仍能绕过校验触发渲染崩溃。
+      const newIndex = sanitizeHistoryIndex(changes[INDEX_KEY].newValue);
       this.callback?.(newIndex);
     };
     chrome.storage.onChanged.addListener(this.listener);
