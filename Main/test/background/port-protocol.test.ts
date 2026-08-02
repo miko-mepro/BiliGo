@@ -48,8 +48,39 @@ describe('isSWMessage', () => {
     expect(isSWMessage({ type: 'error', message: 'x', code: 123 })).toBe(false)
   })
 
-  it('requires boolean ok and optional string error for connection_result', () => {
-    expect(isSWMessage({ type: 'connection_result', ok: 'true' })).toBe(false)
+  // S-3：videos 消息的批次字段校验，采用向后兼容降级策略
+  describe('videos 批次字段校验（S-3）', () => {
+    it('接受携带 batchId 与 reranked 的完整批次消息', () => {
+      expect(
+        isSWMessage({ type: 'videos', videos: [], batchId: 'search_c1', reranked: true }),
+      ).toBe(true)
+    })
+
+    it('batchId 缺失时仍接受（向后兼容旧版本 SW 推送）', () => {
+      expect(isSWMessage({ type: 'videos', videos: [] })).toBe(true)
+    })
+
+    it('batchId 为空字符串时拒绝（存在但非法）', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: '' })).toBe(false)
+    })
+
+    it('batchId 类型非法时拒绝', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 123 })).toBe(false)
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: null })).toBe(false)
+    })
+
+    it('reranked 类型非法时拒绝', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 'b1', reranked: 'yes' })).toBe(
+        false,
+      )
+    })
+
+    it('reranked 缺省时接受', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 'b1' })).toBe(true)
+    })
+  })
+
+  it('requires boolean ok and optional string error for connection_result', () => {    expect(isSWMessage({ type: 'connection_result', ok: 'true' })).toBe(false)
     expect(isSWMessage({ type: 'connection_result', ok: 1 })).toBe(false)
     expect(isSWMessage({ type: 'connection_result', ok: true, error: 123 })).toBe(false)
     expect(isSWMessage({ type: 'connection_result' })).toBe(false)

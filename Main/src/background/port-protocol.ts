@@ -8,7 +8,11 @@ export type SWMessage =
   | { type: 'reasoning'; delta: string }
   | { type: 'tool_start'; toolCallId: string; toolName: string; args: unknown }
   | { type: 'tool_result'; toolCallId: string; toolName: string; result: unknown }
-  | { type: 'videos'; videos: BilibiliVideoCard[] }
+  // videos 消息携带批次归属（S-3）：
+  // batchId 标识这组视频属于哪一次搜索，video_rerank 的重排推送复用同一 batchId，
+  // 使 content script 能区分「同批次的重排更新」与「新搜索的新批次」。
+  // reranked 标记本次推送是否为重排结果，供 S-4 判断排序优先级。
+  | { type: 'videos'; videos: BilibiliVideoCard[]; batchId?: string; reranked?: boolean }
   | { type: 'insight'; kind: InsightKind; data: unknown }
   | { type: 'done' }
   | { type: 'error'; message: string; code?: string }
@@ -41,7 +45,13 @@ export function isSWMessage(value: unknown): value is SWMessage {
         && typeof record.toolName === 'string'
         && Object.hasOwn(record, 'result')
     case 'videos':
+      // 批次字段采用向后兼容降级策略（S-3 方案B）：batchId 缺失时不拒绝消息，
+      // 由 consumeSWMessage 生成临时 batchId，避免 SW/CS 版本不一致时视频完全不显示。
+      // 但字段存在时必须类型合法，防止非法值进入状态层（参考 R-1 的教训）。
       return Array.isArray(record.videos)
+        && (record.batchId === undefined
+          || (typeof record.batchId === 'string' && record.batchId.length > 0))
+        && (record.reranked === undefined || typeof record.reranked === 'boolean')
     case 'insight':
       return ['understanding', 'expansion', 'rerank', 'clarification'].includes(
         String(record.kind),

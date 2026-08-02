@@ -49,6 +49,13 @@ export interface PortState {
 
 export interface PortSession extends PortState {
   abortController: AbortController | null
+  /**
+   * 最近一次 bilibili_search 生成的批次标识（S-3）。
+   * video_rerank 推送重排结果时读取此值复用同一 batchId，
+   * 使 content script 把重排识别为「同批次更新」而非「新批次」。
+   * 断线重连后 session 重建，该字段自然重置为 undefined。
+   */
+  lastSearchBatchId?: string
 }
 
 export function postToPort(port: chrome.runtime.Port, state: PortState, msg: SWMessage): void {
@@ -171,18 +178,30 @@ function buildTools(traceId: string): ToolSet {
  * 再由调用方推送 tool_result，从而保证顺序为 tool_start -> videos/insight -> tool_result。
  *
  * @param toolInput 该 toolCallId 对应的 tool-call 事件 input（video_rerank 需要从中取原始候选视频列表）
+ * @param toolCallId 该次工具调用的唯一标识，用于派生视频批次 batchId（S-3）
  */
 function postToolAuxiliaryMessages(
   port: chrome.runtime.Port,
-  session: PortState,
+  session: PortSession,
   toolName: string,
   output: unknown,
   toolInput?: unknown,
+  toolCallId?: string,
 ): void {
   switch (toolName) {
-    case 'bilibili_search':
-      postToPort(port, session, { type: 'videos', videos: output as BilibiliVideoCard[] })
+    case 'bilibili_search': {
+      // 批次标识由 toolCallId 派生（S-3 策略A）：toolCallId 天然唯一且可追溯到具体工具调用。
+      // 记录到 session 供随后的 video_rerank 复用。
+      const batchId = `search_${toolCallId ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`
+      session.lastSearchBatchId = batchId
+      postToPort(port, session, {
+        type: 'videos',
+        videos: output as BilibiliVideoCard[],
+        batchId,
+        reranked: false,
+      })
       break
+    }
     case 'slang_understand':
       postToPort(port, session, {
         type: 'insight',
@@ -207,7 +226,17 @@ function postToolAuxiliaryMessages(
       const candidates = extractVideoCandidates(toolInput)
       if (candidates.length > 0) {
         const reordered = reorderVideosByRerank(candidates, rerankResult.items)
-        postToPort(port, session, { type: 'videos', videos: reordered })
+        // 复用最近一次 bilibili_search 的 batchId（S-3），使重排更新落到同一批次上；
+        // 若本次会话尚无搜索批次（异常路径），降级生成独立批次标识避免丢失结果。
+        const batchId =
+          session.lastSearchBatchId
+          ?? `rerank_${toolCallId ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`
+        postToPort(port, session, {
+          type: 'videos',
+          videos: reordered,
+          batchId,
+          reranked: true,
+        })
       }
       break
     }
@@ -354,7 +383,8 @@ export async function handleChatMessage(
         case 'tool-result': {
           // 先推送附加 videos/insight 消息（3.2 §9.2 顺序：tool_start -> videos/insight -> tool_result）
           const toolInput = toolInputs.get(part.toolCallId)
-          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput)
+          // 传入 toolCallId 用于派生视频批次标识（S-3）
+          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
           toolInputs.delete(part.toolCallId)
           // 再推送 tool_result
           postToPort(port, session, {

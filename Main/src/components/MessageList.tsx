@@ -7,7 +7,7 @@ import { VideoCard } from './VideoCard.js'
 import { FilterSortControls } from './FilterSortControls.js'
 import { AgentInsightCard } from './AgentInsightCard.js'
 import { applySortAndFilter } from '../utils/sort-filter.js'
-import type { BilibiliVideoCard, ChatMessage } from '../lib/shared-types/index.js'
+import type { BilibiliVideoCard, ChatMessage, VideoBatch } from '../lib/shared-types/index.js'
 import type { SortField, DateFilter, DurationFilter } from '../utils/sort-filter.js'
 
 interface MessageListProps {
@@ -20,7 +20,9 @@ type RenderItem =
   | { type: 'message'; message: ChatMessage; index: number; isStreaming: boolean; streamingContent: string }
   | { type: 'understanding'; data: TimedUnderstanding }
   | { type: 'expansion'; data: TimedExpansion }
-  | { type: 'rerank'; data: TimedRerank };
+  | { type: 'rerank'; data: TimedRerank }
+  // 视频批次项（S-3）：按 anchorTimestamp 插入消息流，使旧视频留在旧输出下
+  | { type: 'video-batch'; batch: VideoBatch };
 
 function getRenderItemTime(item: RenderItem): number {
   switch (item.type) {
@@ -28,7 +30,52 @@ function getRenderItemTime(item: RenderItem): number {
     case 'understanding': return item.data.receivedAt;
     case 'expansion': return item.data.receivedAt;
     case 'rerank': return item.data.receivedAt;
+    // 批次锚点即其在消息流中的排序键
+    case 'video-batch': return item.batch.anchorTimestamp;
   }
+}
+
+/**
+ * 单个视频批次块（S-3）：渲染该批次的筛选排序控件 + 视频网格。
+ *
+ * 筛选/排序状态按批次独立维护——用户对旧批次的排序不应影响新批次。
+ * 状态随组件挂载而生，批次被清空时随之销毁，无需额外重置 effect：
+ * 每个批次由稳定的 batchId 作为 key，新批次挂载新组件即得到全新默认状态。
+ */
+function VideoBatchBlock({ batch }: { batch: VideoBatch }): React.ReactElement | null {
+  const [sortField, setSortField] = useState<SortField>('play');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
+  const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
+
+  const processedVideos = useMemo(() => {
+    return applySortAndFilter(batch.videos, sortField, dateFilter, durationFilter);
+  }, [batch.videos, sortField, dateFilter, durationFilter]);
+
+  if (batch.videos.length === 0) return null;
+
+  return (
+    <>
+      <FilterSortControls
+        sortField={sortField}
+        dateFilter={dateFilter}
+        durationFilter={durationFilter}
+        onSortChange={setSortField}
+        onDateFilterChange={setDateFilter}
+        onDurationFilterChange={setDurationFilter}
+      />
+      {processedVideos.length > 0 ? (
+        <div className="bili-agent-video-grid" data-testid="video-grid">
+          {processedVideos.map((video) => (
+            <VideoCard key={video.bvid} video={video} />
+          ))}
+        </div>
+      ) : (
+        <div className="bili-agent-message-list__no-results" data-testid="no-results">
+          <p>没有符合筛选条件的视频</p>
+        </div>
+      )}
+    </>
+  );
 }
 
 export function MessageList({
@@ -37,30 +84,32 @@ export function MessageList({
 }: MessageListProps): React.ReactElement {
   const { state, sendMessage } = useChat();
   const { understandings, expansions, reranks, clarification } = useAgentInsights();
-  const videos = providedVideos ?? state.videos;
+  // 视频批次（S-3）：providedVideos 是测试/外部注入的兼容入口，
+  // 提供时包装为单个临时批次，锚点取 0 使其排在消息流最前。
+  const videoBatches = useMemo<VideoBatch[]>(() => {
+    if (providedVideos) {
+      return providedVideos.length > 0
+        ? [{
+            batchId: 'provided',
+            videos: providedVideos,
+            anchorTimestamp: 0,
+            receivedAt: 0,
+            reranked: false,
+          }]
+        : [];
+    }
+    // 防御性兜底（参考 R-1 教训）：state 可能来自旧版本持久化数据或外部注入的
+    // 部分 mock，videoBatches 缺失时降级为空数组，不在 render 阶段抛 TypeError。
+    return state.videoBatches ?? [];
+  }, [providedVideos, state.videoBatches]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Local filter/sort state — resets with each conversation (not persisted)
-  const [sortField, setSortField] = useState<SortField>('play');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all');
-  const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
+  // 筛选/排序状态已下沉到 VideoBatchBlock（S-3）：每个批次独立维护，
+  // 因此这里不再有全局 sortField/dateFilter/durationFilter，
+  // 也不需要「videos 变化时重置筛选」的 effect——新批次挂载新组件即为默认状态。
 
-  // Reset filters when videos change (new search results)
-  // 修复 #11：依赖视频数组本身而非 length——两次搜索返回相同数量时长度不变，
-  // 旧筛选条件会残留；SET_VIDEOS 每次都会产生新数组引用，以引用为依赖即可
-  useEffect(() => {
-    setSortField('play');
-    setDateFilter('all');
-    setDurationFilter('all');
-  }, [videos]);
-
-  // Apply sort and filter client-side
-  const processedVideos = useMemo(() => {
-    return applySortAndFilter(videos, sortField, dateFilter, durationFilter);
-  }, [videos, sortField, dateFilter, durationFilter]);
-
-  // Merge messages + insights into time-ordered render items
+  // Merge messages + insights + video batches into time-ordered render items
   const renderItems = useMemo<RenderItem[]>(() => {
     const items: RenderItem[] = [];
     const lastMsgIndex = state.messages.length - 1;
@@ -85,19 +134,22 @@ export function MessageList({
     reranks.forEach((data) => {
       items.push({ type: 'rerank', data });
     });
+    // 视频批次并入渲染项（S-3），由 anchorTimestamp 决定其在消息流中的位置
+    videoBatches.forEach((batch) => {
+      items.push({ type: 'video-batch', batch });
+    });
 
     items.sort((a, b) => getRenderItemTime(a) - getRenderItemTime(b));
     return items;
-  }, [state.messages, understandings, expansions, reranks, state.isLoading, state.streamingContent]);
+  }, [state.messages, understandings, expansions, reranks, videoBatches, state.isLoading, state.streamingContent]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [renderItems.length, state.streamingContent, state.streamingReasoning, videos]);
+  }, [renderItems.length, state.streamingContent, state.streamingReasoning, videoBatches]);
 
   const hasMessages = state.messages.length > 0;
-  const hasVideos = videos.length > 0;
-  const hasProcessedVideos = processedVideos.length > 0;
+  const hasVideos = videoBatches.some((batch) => batch.videos.length > 0);
   const hasInsights =
     understandings.length > 0 ||
     expansions.length > 0 ||
@@ -155,33 +207,14 @@ export function MessageList({
                 />
               );
             }
+            if (item.type === 'video-batch') {
+              // 视频批次内联渲染（S-3）：以 batchId 为 key，
+              // 使同批次的 rerank 更新复用组件实例（保留用户筛选选择），
+              // 新批次挂载新实例（得到默认筛选状态）
+              return <VideoBatchBlock key={`batch-${item.batch.batchId}`} batch={item.batch} />;
+            }
             return renderInsightItem(item, idx);
           })}
-
-          {hasVideos && (
-            <FilterSortControls
-              sortField={sortField}
-              dateFilter={dateFilter}
-              durationFilter={durationFilter}
-              onSortChange={setSortField}
-              onDateFilterChange={setDateFilter}
-              onDurationFilterChange={setDurationFilter}
-            />
-          )}
-
-          {hasProcessedVideos && (
-            <div className="bili-agent-video-grid" data-testid="video-grid">
-              {processedVideos.map((video) => (
-                <VideoCard key={video.bvid} video={video} />
-              ))}
-            </div>
-          )}
-
-          {hasVideos && !hasProcessedVideos && (
-            <div className="bili-agent-message-list__no-results" data-testid="no-results">
-              <p>没有符合筛选条件的视频</p>
-            </div>
-          )}
 
           {clarification && (
             <AgentInsightCard

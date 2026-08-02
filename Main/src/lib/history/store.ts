@@ -7,6 +7,7 @@ import type {
   BilibiliVideoCard,
   ConversationRecord,
   ConversationData,
+  VideoBatch,
   SlangUnderstandResult,
   QueryExpandResult,
   RerankResult,
@@ -32,6 +33,8 @@ export interface PersistedConversation {
   conversationId: string;
   messages: ChatMessage[];
   videos: BilibiliVideoCard[];
+  /** 视频批次（S-3）：可选，兼容尚未写入批次的旧缓存 */
+  videoBatches?: VideoBatch[];
   understandings: Array<SlangUnderstandResult & { receivedAt: number }>;
   expansions: Array<QueryExpandResult & { receivedAt: number }>;
   reranks: Array<RerankResult & { receivedAt: number }>;
@@ -46,6 +49,8 @@ export interface SaveableConversation {
   conversationId: string;
   messages: ChatMessage[];
   videos: BilibiliVideoCard[];
+  /** 视频批次（S-3）：可选，未提供时加载端按扁平 videos 迁移为单批次 */
+  videoBatches?: VideoBatch[];
   understandings: Array<SlangUnderstandResult & { receivedAt: number }>;
   expansions: Array<QueryExpandResult & { receivedAt: number }>;
   reranks: Array<RerankResult & { receivedAt: number }>;
@@ -117,6 +122,9 @@ export async function saveConversation(
     id,
     messages: data.messages,
     videos: data.videos,
+    // 保存视频批次（S-3）：使历史会话加载后旧视频仍挂在旧输出下。
+    // 未提供批次时省略该字段，加载端会按扁平 videos 迁移为单批次。
+    ...(data.videoBatches ? { videoBatches: data.videoBatches } : {}),
     understandings: data.understandings,
     expansions: data.expansions,
     reranks: data.reranks,

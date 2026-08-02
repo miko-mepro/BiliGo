@@ -537,7 +537,13 @@ describe('tool auxiliary messages', () => {
       toolName: 'bilibili_search',
       args: { keyword: '鬼畜' },
     })
-    expect(posted).toContainEqual({ type: 'videos', videos })
+    // S-3：videos 推送携带批次归属，batchId 由 toolCallId 派生
+    expect(posted).toContainEqual({
+      type: 'videos',
+      videos,
+      batchId: 'search_call_s1',
+      reranked: false,
+    })
     expect(posted).toContainEqual({
       type: 'tool_result',
       toolCallId: 'call_s1',
@@ -591,6 +597,7 @@ describe('tool auxiliary messages', () => {
       data: rerankResult,
     })
     // 重排后的视频列表按 rerank items 的 bvid 顺序
+    // S-3：本会话无前置 bilibili_search，batchId 降级为 rerank_<toolCallId>，reranked=true
     expect(posted).toContainEqual({
       type: 'videos',
       videos: [
@@ -598,6 +605,8 @@ describe('tool auxiliary messages', () => {
         { bvid: 'BV1', title: 'v1' },
         { bvid: 'BV3', title: 'v3' },
       ],
+      batchId: 'rerank_call_r1',
+      reranked: true,
     })
     expect(posted).toContainEqual({
       type: 'tool_result',
@@ -617,6 +626,68 @@ describe('tool auxiliary messages', () => {
     expect(videosIdx).toBeGreaterThan(insightIdx)
     expect(toolResultIdx).toBeGreaterThan(videosIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  // S-3：标准工作流「搜索 -> 重排」下，两次 videos 推送必须落在同一批次上，
+  // 否则 content script 会把重排结果当作新搜索，产生两组视频网格。
+  it('reuses the same batchId for bilibili_search then video_rerank (S-3)', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const searchResults = [
+      { bvid: 'BV1', title: 'v1' },
+      { bvid: 'BV2', title: 'v2' },
+    ]
+    const rerankResult = {
+      items: [
+        { bvid: 'BV2', score: 0.9, reason: 'best' },
+        { bvid: 'BV1', score: 0.5, reason: 'ok' },
+      ],
+      strategy: 'llm' as const,
+      trimmed: 0,
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s1', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s1', 'bilibili_search', searchResults),
+        toolCall('call_r1', 'video_rerank', { videos: searchResults, intent: 'test' }),
+        toolResult('call_r1', 'video_rerank', rerankResult),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const videoMsgs = posted.filter((m) => m.type === 'videos')
+    expect(videoMsgs).toHaveLength(2)
+    // 关键断言：重排推送复用搜索批次标识
+    expect(videoMsgs[0].batchId).toBe('search_call_s1')
+    expect(videoMsgs[1].batchId).toBe('search_call_s1')
+    // 首次推送未重排，第二次标记为重排结果
+    expect(videoMsgs[0].reranked).toBe(false)
+    expect(videoMsgs[1].reranked).toBe(true)
+    // 重排后顺序按 rerank items
+    expect(videoMsgs[1].videos?.map((v: { bvid: string }) => v.bvid)).toEqual(['BV2', 'BV1'])
+  })
+
+  it('generates distinct batchIds for two consecutive searches (S-3)', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s1', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s1', 'bilibili_search', [{ bvid: 'BV1', title: 'v1' }]),
+        toolCall('call_s2', 'bilibili_search', { keyword: '编程' }),
+        toolResult('call_s2', 'bilibili_search', [{ bvid: 'BV2', title: 'v2' }]),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const videoMsgs = posted.filter((m) => m.type === 'videos')
+    expect(videoMsgs).toHaveLength(2)
+    // 两次独立搜索产生不同批次，content script 才能各自保留
+    expect(videoMsgs[0].batchId).toBe('search_call_s1')
+    expect(videoMsgs[1].batchId).toBe('search_call_s2')
+    expect(videoMsgs[0].batchId).not.toBe(videoMsgs[1].batchId)
   })
 
   it('pushes tool_start + insight(clarification) + tool_result for ask_clarification', async () => {
