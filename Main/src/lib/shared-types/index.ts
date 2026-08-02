@@ -10,7 +10,13 @@ export interface ChatMessage {
 
 export interface AgentStep {
   id: string;
-  type: 'tool_call';
+  /**
+   * 步骤类型：
+   * - 'tool_call'：工具调用步骤（name 为工具名，UI 渲染为小胶囊）
+   * - 'note'：过程文字（模型在工具调用前输出的计划/说明文本，
+   *   由前端自动归类进思维栏，summary 字段承载全文）
+   */
+  type: 'tool_call' | 'note';
   name: string;
   summary: string;
   status: 'running' | 'completed';

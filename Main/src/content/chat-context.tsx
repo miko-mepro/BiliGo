@@ -117,6 +117,7 @@ export type ChatAction =
   | { type: 'SET_ACTIVITY'; payload: AgentActivity | null }
   | { type: 'ADD_STEP'; payload: AgentStep }
   | { type: 'COMPLETE_STEP'; payload: { toolCallId: string; completedAt: number } }
+  | { type: 'PROMOTE_STREAMING_TO_NOTE' }
   | { type: 'CLEAR_STREAMING' }
   | { type: 'UPDATE_LAST_MESSAGE'; payload: { content: string; reasoning?: string } }
   | { type: 'CLEAR_MESSAGES' }
@@ -216,6 +217,31 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       if (!steps?.some((step) => step.id === action.payload.toolCallId)) return state
       messages[messages.length - 1] = { ...last, steps }
       return { ...state, messages }
+    }
+
+    case 'PROMOTE_STREAMING_TO_NOTE': {
+      // 过程文字自动归类：工具调用发生时，把此前累积的流式正文（模型宣布计划、
+      // 判断意图等过程性文字）转为 'note' 步骤挂到末条 assistant 消息的 steps，
+      // 并清空 streamingContent。这样正文气泡最终只保留最后一段（工具全部结束
+      // 后的总结），过程文字全部进入思维栏时间线。
+      const trimmed = state.streamingContent.trim()
+      if (!trimmed) return state
+      const messages = [...state.messages]
+      const last = messages[messages.length - 1]
+      if (!last || last.role !== 'assistant') return state
+      const note: AgentStep = {
+        id: `note_${Date.now()}_${(last.steps?.length ?? 0) + 1}`,
+        type: 'note',
+        name: 'note',
+        summary: trimmed,
+        status: 'completed',
+        timestamp: Date.now(),
+      }
+      messages[messages.length - 1] = {
+        ...last,
+        steps: [...(last.steps ?? []), note],
+      }
+      return { ...state, messages, streamingContent: '' }
     }
 
     case 'CLEAR_STREAMING':
@@ -404,6 +430,11 @@ export function consumeSWMessage(
 
     case 'tool_start':
       ensureAssistantPlaceholder(stateRef, dispatch)
+      // 过程文字自动归类：工具调用前累积的流式正文是"过程性文字"
+      //（宣布计划、判断意图等），先转为 note 步骤收进思维栏，再记录工具步骤。
+      // 注意：reducer 里的 streamingContent 才是权威值，stateRef 可能滞后，
+      // 由 PROMOTE_STREAMING_TO_NOTE 内部判空，此处无条件 dispatch 即可。
+      dispatch({ type: 'PROMOTE_STREAMING_TO_NOTE' })
       dispatch({ type: 'SET_ACTIVITY', payload: { kind: 'tool', label: msg.toolName } })
       dispatch({
         type: 'ADD_STEP',

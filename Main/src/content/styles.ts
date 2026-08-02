@@ -907,6 +907,81 @@ const css = `
     overflow-y: auto;
   }
 
+  /* 折叠态 1.5 行尾部预览：固定高度约 1.5 行（12px × 1.7 × 1.5 ≈ 30px），
+     内容底部对齐只露出最后 1.5 行，顶部盖半透明渐变遮罩暗示"上面还有内容" */
+  .bili-agent-thinking__preview {
+    position: relative;
+    height: 30px;
+    padding: 0 12px 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    cursor: pointer;
+    border-top: 1px dashed var(--bili-border);
+  }
+
+  .bili-agent-thinking__preview-text {
+    color: var(--bili-text-muted);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* 顶部半透明渐变遮罩：从思维栏背景色渐变到透明，深浅色模式随 CSS 变量自动适配 */
+  .bili-agent-thinking__preview::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: linear-gradient(var(--bili-bg-think), transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* 展开态时间线：过程文字段落（note 步骤） */
+  .bili-agent-thinking__reasoning,
+  .bili-agent-thinking__note {
+    color: var(--bili-text-muted);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .bili-agent-thinking__note + .bili-agent-thinking__note,
+  .bili-agent-thinking__reasoning + .bili-agent-thinking__note {
+    margin-top: 6px;
+  }
+
+  /* 展开态时间线：工具调用胶囊（从正文区迁移进思维栏，复用步骤胶囊配色） */
+  .bili-agent-thinking__step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    max-width: 100%;
+    margin: 6px 0;
+    padding: 4px 10px;
+    border-radius: 10px;
+    background-color: var(--bili-bg-step);
+    color: var(--bili-text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .bili-agent-thinking__step--running {
+    animation: bili-agent-fade-pulse 1.2s ease-in-out infinite;
+  }
+
+  .bili-agent-thinking__step-status {
+    color: var(--bili-text-muted);
+    font-size: 11px;
+  }
+
   /* Tool Activity Steps */
   .bili-agent-message__steps {
     display: flex;
