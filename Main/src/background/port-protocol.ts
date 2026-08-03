@@ -103,12 +103,159 @@ export function isCSMessage(value: unknown): value is CSMessage {
   }
 }
 
-export function inferErrorCode(message: string): string {
-  const lower = message.toLowerCase()
-  if (/\b401\b/.test(message) || /\b403\b/.test(message)
-    || lower.includes('api key') || lower.includes('auth')) return '401'
-  if (/\b429\b/.test(message) || lower.includes('rate limit')) return '429'
-  return 'NETWORK_ERROR'
+type ErrorRecord = Record<string, unknown>
+
+function isErrorRecord(value: unknown): value is ErrorRecord {
+  return typeof value === 'object' && value !== null
+}
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  if (isErrorRecord(error) && typeof error.message === 'string') return error.message
+  return String(error)
+}
+
+/**
+ * 只读取根错误和最多两层 cause，既保留 fetch failed 的底层网络码，
+ * 也避免异常对象的循环 cause 或过深链路造成无限遍历。
+ */
+function collectErrorChain(error: unknown): unknown[] {
+  const chain: unknown[] = []
+  const visited = new Set<unknown>()
+  let current: unknown = error
+
+  for (let depth = 0; depth <= 2; depth += 1) {
+    if (visited.has(current)) break
+    visited.add(current)
+    chain.push(current)
+
+    if (!isErrorRecord(current) || !('cause' in current)) break
+    current = current.cause
+  }
+
+  return chain
+}
+
+function getStructuredNetworkCode(error: unknown): string | undefined {
+  if (!isErrorRecord(error)) return undefined
+  const rawCode = typeof error.code === 'string'
+    ? error.code
+    : typeof error.errno === 'string'
+      ? error.errno
+      : undefined
+  if (!rawCode) return undefined
+
+  switch (rawCode.toUpperCase()) {
+    case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      return 'DNS_ERROR'
+    case 'ECONNREFUSED':
+      return 'CONNECTION_REFUSED'
+    case 'ECONNRESET':
+      return 'CONNECTION_RESET'
+    case 'ETIMEDOUT':
+      return 'TIMEOUT_ERROR'
+    case 'EPROTO':
+    case 'CERT_HAS_EXPIRED':
+    case 'UNABLE_TO_VERIFY_LEAF_SIGNATURE':
+      return 'TLS_ERROR'
+    default:
+      return undefined
+  }
+}
+
+function getHttpStatus(error: unknown): number | undefined {
+  if (isErrorRecord(error)) {
+    const response = isErrorRecord(error.response) ? error.response : undefined
+    const candidates = [error.status, error.statusCode, response?.status]
+    for (const candidate of candidates) {
+      if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 400 && candidate <= 599) {
+        return candidate
+      }
+      if (typeof candidate === 'string' && /^\d{3}$/.test(candidate)) {
+        const status = Number(candidate)
+        if (status >= 400 && status <= 599) return status
+      }
+    }
+  }
+
+  const message = getErrorMessage(error)
+  const match = /\bHTTP\s*(\d{3})\b/i.exec(message)
+    ?? /\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i.exec(message)
+  if (!match) return undefined
+
+  const status = Number(match[1])
+  return status >= 400 && status <= 599 ? status : undefined
+}
+
+function classifyHttpStatus(status: number): string {
+  if (status === 401 || status === 403) return '401'
+  if (status === 404) return 'NOT_FOUND_ERROR'
+  if (status === 408) return 'TIMEOUT_ERROR'
+  if (status === 429) return '429'
+  if (status >= 400 && status < 500) return 'CLIENT_ERROR'
+  return 'SERVER_ERROR'
+}
+
+/**
+ * 从 unknown 错误中提取稳定分类。调用方应传入原始异常，
+ * 这样 fetch failed 的 cause 中的 Node 错误码不会在入口处丢失。
+ */
+export function inferErrorCode(error: unknown): string {
+  const chain = collectErrorChain(error)
+
+  // 取消/超时优先于普通网络文本，避免 TimeoutError 被归为 NETWORK_ERROR。
+  if (chain.some((item) => {
+    if (!isErrorRecord(item)) return false
+    return item.name === 'AbortError' || item.name === 'TimeoutError'
+  })) {
+    return 'TIMEOUT_ERROR'
+  }
+
+  // 先检查根错误和 cause 链中的结构化 Node 错误码。
+  for (const item of chain) {
+    const code = getStructuredNetworkCode(item)
+    if (code) return code
+  }
+
+  // HTTP 状态码只接受 HTTP/status 前缀或结构化 status 字段，避免误读 B 站业务码。
+  for (const item of chain) {
+    const status = getHttpStatus(item)
+    if (status !== undefined) return classifyHttpStatus(status)
+  }
+
+  const lower = chain.map(getErrorMessage).join('\n').toLowerCase()
+  if (/\b(?:401|403)\b/.test(lower)
+    || /\b(?:api[\s_-]*key|authentication|unauthorized|forbidden)\b/.test(lower)) {
+    return '401'
+  }
+  if (/\b429\b/.test(lower)
+    || /\b(?:rate[\s_-]*limit|too many requests)\b/.test(lower)) {
+    return '429'
+  }
+  if (/\b(?:timeout|timed out|time out|deadline exceeded)\b/.test(lower)) {
+    return 'TIMEOUT_ERROR'
+  }
+  if (/\b(?:enotfound|eai_again|dns|name resolution|getaddrinfo)\b/.test(lower)) {
+    return 'DNS_ERROR'
+  }
+  if (/\b(?:econnrefused|connection refused|connect refused)\b/.test(lower)) {
+    return 'CONNECTION_REFUSED'
+  }
+  if (/\b(?:econnreset|connection reset|socket hang up)\b/.test(lower)) {
+    return 'CONNECTION_RESET'
+  }
+  if (/\b(?:eproto|tls|ssl|certificate|handshake)\b/.test(lower)) {
+    return 'TLS_ERROR'
+  }
+  if (/(?:provider|base[\s_-]*url|model).*(?:invalid|missing|not configured|unsupported)/.test(lower)) {
+    return 'PROVIDER_CONFIG_ERROR'
+  }
+  if (/\b(?:fetch failed|network|socket|connect)\b/.test(lower)) {
+    return 'NETWORK_ERROR'
+  }
+  return 'UNKNOWN_ERROR'
 }
 
 export function friendlyMessage(code: string | undefined, fallback?: string): string {
@@ -116,15 +263,25 @@ export function friendlyMessage(code: string | undefined, fallback?: string): st
   const generic = '请求失败，请稍后重试'
 
   if (normalized === 'provider_not_configured') return '请到设置配置 AI 提供商'
-  if (normalized === '401' || normalized === '403' || normalized === 'auth') {
+  if (normalized === '401' || normalized === '403' || normalized === 'auth' || normalized === 'auth_error') {
     return 'API Key 无效，请检查设置'
   }
   if (normalized === '429' || normalized === 'rate_limit') {
     return '请求太频繁，请稍后重试'
   }
+  if (normalized === 'dns_error') return '域名解析失败，请检查 Base URL 或网络'
+  if (normalized === 'connection_refused') return '连接被拒绝，请检查 Base URL 或服务状态'
+  if (normalized === 'connection_reset') return '连接被重置，请检查网络稳定性'
+  if (normalized === 'tls_error') return 'TLS 握手失败，请检查 Base URL 协议或证书'
+  if (normalized === 'timeout_error') return '连接超时，请检查网络或稍后重试'
+  if (normalized === 'not_found_error') return '模型或接口不存在，请检查模型名或 Base URL'
+  if (normalized === 'client_error') return '请求错误，请检查配置'
+  if (normalized === 'server_error') return '服务端异常，请稍后重试'
+  if (normalized === 'provider_config_error') return 'Provider 配置无效，请检查 Base URL 或模型名'
   if (normalized === 'network_error' || normalized === 'network') {
     return '网络连接失败'
   }
+  if (normalized === 'unknown_error') return '请求失败，请稍后重试'
   if (normalized === 'tool_round_limit') {
     return '工具调用次数过多，请换个说法再试'
   }

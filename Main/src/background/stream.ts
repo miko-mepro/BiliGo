@@ -397,7 +397,7 @@ export async function handleChatMessage(
         }
         case 'tool-error': {
           const errorText = String(part.error)
-          const code = inferErrorCode(errorText)
+          const code = inferErrorCode(part.error)
           // 含工具名上下文（4.2 SC-1）：直接使用 toolContextMessage 作为 message，
           // 而非 friendlyMessage(code, ...)。因为 friendlyMessage 对已知 code 返回
           // 固定文案会丢弃工具名上下文。
@@ -413,7 +413,7 @@ export async function handleChatMessage(
           break streamLoop
         case 'error': {
           const errorText = String(part.error)
-          const code = inferErrorCode(errorText)
+          const code = inferErrorCode(part.error)
           postToPort(port, session, {
             type: 'error',
             message: friendlyMessage(code, errorText),
@@ -428,7 +428,7 @@ export async function handleChatMessage(
   } catch (err) {
     if (!isAbortError(err)) {
       const message = err instanceof Error ? err.message : String(err)
-      const code = inferErrorCode(message)
+      const code = inferErrorCode(err)
       postToPort(port, session, {
         type: 'error',
         message: friendlyMessage(code, message),
@@ -516,7 +516,7 @@ export async function handleGenerateTitle(
     if (session.disconnected) return
     // 超时/abort/网络错误等均回 error，由 CS 侧本地降级
     const message = err instanceof Error ? err.message : String(err)
-    const code = inferErrorCode(message)
+    const code = inferErrorCode(err)
     postToPort(port, session, {
       type: 'error',
       message: friendlyMessage(code, message),
@@ -577,7 +577,7 @@ export async function handleTestConnection(
     if (session.disconnected) return
     // 超时/abort/网络错误/鉴权失败等均回 ok:false + 友好错误信息
     const message = err instanceof Error ? err.message : String(err)
-    const code = inferErrorCode(message)
+    const code = inferErrorCode(err)
     postToPort(port, session, {
       type: 'connection_result',
       ok: false,
@@ -605,7 +605,7 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleChatMessage(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            const code = inferErrorCode(message)
+            const code = inferErrorCode(err)
             postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
             postToPort(port, session, { type: 'done' })
           })
@@ -614,7 +614,7 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleGenerateTitle(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            const code = inferErrorCode(message)
+            const code = inferErrorCode(err)
             postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
           })
           break
@@ -622,7 +622,12 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleTestConnection(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            postToPort(port, session, { type: 'connection_result', ok: false, error: message })
+            const code = inferErrorCode(err)
+            postToPort(port, session, {
+              type: 'connection_result',
+              ok: false,
+              error: friendlyMessage(code, message),
+            })
           })
           break
         case 'ping':
