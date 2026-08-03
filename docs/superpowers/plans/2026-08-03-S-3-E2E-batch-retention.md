@@ -15,6 +15,7 @@
 - Register network routes at `BrowserContext` scope so service-worker fetches are intercepted.
 - Do not change production source, protocol types, reducers, render components, or test fixture infrastructure.
 - Keep the two batches distinguishable by unique `bvid`, title, and author values.
+- Include `index: 0` in each streamed `tool_calls` item because `@ai-sdk/openai@4.0.11` validates that field.
 - Do not claim rerank reuse, insight anchor alignment, batch-count limits, or cross-tab synchronization from this test.
 
 ---
@@ -32,7 +33,7 @@
 
 - [ ] **Step 1: Update the tool-call helper without changing its default behavior.**
 
-Replace the hard-coded tool call fields with parameters while preserving the current first-search output:
+Replace the hard-coded tool call fields with parameters while preserving the current first-search output. The `index: 0` field is required by the installed `openaiChatChunkSchema`; without it the existing baseline fails before `tool_start` is emitted:
 
 ```ts
 function buildToolCallSseStream(
@@ -48,6 +49,7 @@ function buildToolCallSseStream(
           content: "",
           tool_calls: [
             {
+              index: 0,
               id: toolCallId,
               type: "function",
               function: {
