@@ -37,19 +37,23 @@ const mockProvider: ProviderConfig = {
  * @returns port mock 对象 + triggerMessage 手动触发函数
  */
 function createMockPort() {
-	let messageListener: ((msg: unknown) => void) | null = null;
+	const messageListeners: Array<(msg: unknown) => void> = [];
+	const disconnectListeners: Array<() => void> = [];
 
 	const port = {
 		postMessage: vi.fn(),
 		onMessage: {
 			addListener: vi.fn((listener: (msg: unknown) => void) => {
 				// 捕获最新注册的 listener，测试中手动触发以模拟 SW 回复
-				messageListener = listener;
+				messageListeners.push(listener);
 			}),
 			removeListener: vi.fn(),
 		},
 		onDisconnect: {
-			addListener: vi.fn(),
+			addListener: vi.fn((listener: () => void) => {
+				// 保存断线 listener，测试中手动触发 Port 原生断线事件
+				disconnectListeners.push(listener);
+			}),
 			removeListener: vi.fn(),
 		},
 		disconnect: vi.fn(),
@@ -57,12 +61,25 @@ function createMockPort() {
 
 	/** 手动触发 captured listener，模拟 SW 回复 connection_result */
 	const triggerMessage = (msg: unknown) => {
-		if (messageListener !== null) {
-			messageListener(msg);
-		}
+		messageListeners.at(-1)?.(msg);
 	};
 
-	return { port: port as unknown as chrome.runtime.Port, triggerMessage };
+	/** 触发指定代次的 listener，用于验证旧请求结果不会覆盖新状态 */
+	const triggerMessageAt = (index: number, msg: unknown) => {
+		messageListeners[index]?.(msg);
+	};
+
+	/** 手动触发最近一次 onDisconnect listener */
+	const triggerDisconnect = () => {
+		disconnectListeners.at(-1)?.();
+	};
+
+	return {
+		port: port as unknown as chrome.runtime.Port,
+		triggerMessage,
+		triggerMessageAt,
+		triggerDisconnect,
+	};
 }
 
 describe("TestConnectionButton", () => {
@@ -143,6 +160,8 @@ describe("TestConnectionButton", () => {
 
 			// 验证注册了 onMessage listener
 			expect(port.onMessage.addListener).toHaveBeenCalledTimes(1);
+			// N-3：连接测试同时监听 Port 原生断线事件
+			expect(port.onDisconnect.addListener).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -276,6 +295,27 @@ describe("TestConnectionButton", () => {
 
 			vi.useRealTimers();
 		});
+
+		it("Port 断开后立即显示连接已断开，而不是等待超时", async () => {
+			vi.useFakeTimers();
+			const { port, triggerDisconnect } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			triggerDisconnect();
+			await act(async () => {});
+
+			const result = screen.getByTestId("test-connection-result");
+			expect(result).toHaveTextContent("✕ 连接失败：连接已断开");
+			expect(result).not.toHaveTextContent("连接超时");
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(12_000);
+			});
+			expect(result).toHaveTextContent("✕ 连接失败：连接已断开");
+
+			vi.useRealTimers();
+		});
 	});
 
 	describe("防重复触发", () => {
@@ -310,6 +350,8 @@ describe("TestConnectionButton", () => {
 
 			// 验证卸载时移除了 onMessage listener，防止内存泄漏
 			expect(port.onMessage.removeListener).toHaveBeenCalledTimes(1);
+			// N-3：卸载也必须移除 onDisconnect listener
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
 		});
 
 		it("测试完成后也清理 listener（无需卸载）", async () => {
@@ -332,6 +374,46 @@ describe("TestConnectionButton", () => {
 
 			// 测试完成后应已移除 listener
 			expect(port.onMessage.removeListener).toHaveBeenCalledTimes(1);
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+		});
+
+		it("Provider 变化后旧结果不会覆盖新状态", async () => {
+			const { port, triggerMessageAt } = createMockPort();
+			const { rerender } = render(
+				<TestConnectionButton provider={mockProvider} port={port} />,
+			);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			const nextProvider = { ...mockProvider, id: "custom-2", model: "gpt-4o" };
+			rerender(
+				<TestConnectionButton
+					key={JSON.stringify(nextProvider)}
+					provider={nextProvider}
+					port={port}
+				/>,
+			);
+
+			// 即使测试桩仍调用已移除的旧 listener，代次检查也必须丢弃结果。
+			triggerMessageAt(0, { type: "connection_result", ok: true });
+			await act(async () => {});
+
+			expect(screen.queryByTestId("test-connection-result")).not.toBeInTheDocument();
+			expect(screen.getByTestId("test-connection-button")).not.toBeDisabled();
+		});
+
+		it("组件卸载后旧结果不更新状态", async () => {
+			const { port, triggerMessageAt } = createMockPort();
+			const { unmount } = render(
+				<TestConnectionButton provider={mockProvider} port={port} />,
+			);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			unmount();
+
+			// 旧 listener 即使被测试桩手动触发，也不能让已卸载请求继续写状态。
+			expect(() => {
+				triggerMessageAt(0, { type: "connection_result", ok: true });
+			}).not.toThrow();
 		});
 	});
 });

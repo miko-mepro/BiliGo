@@ -25,6 +25,21 @@ const FRONTEND_TIMEOUT_MS = 12_000;
 interface ConnectionResult {
 	ok: boolean;
 	error?: string;
+	/** 仅供组件内部取消旧请求，取消结果不能更新当前 UI。 */
+	cancelled?: boolean;
+}
+
+/**
+ * 一次连接测试持有的全部异步资源。
+ * 将资源绑定到请求对象，避免旧请求完成时清理新请求的 listener/timer。
+ */
+interface PendingConnection {
+	port: chrome.runtime.Port;
+	onMessage: (msg: unknown) => void;
+	onDisconnect: () => void;
+	timer: ReturnType<typeof setTimeout> | null;
+	settled: boolean;
+	settle: (result: ConnectionResult) => void;
 }
 
 /** TestConnectionButton 组件的 props 定义 */
@@ -67,41 +82,46 @@ export function TestConnectionButton({
 	// 是否为前端超时兜底触发的失败（用于区分显示文案）
 	const [isTimeout, setIsTimeout] = useState<boolean>(false);
 
-	// 保存当前 onMessage listener 引用，用于卸载或重测时移除
-	const listenerRef = useRef<((msg: unknown) => void) | null>(null);
-	// 保存当前超时定时器，用于卸载或重测时清除
-	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// 保存当前请求，统一管理 onMessage、onDisconnect 和超时 timer。
+	const activeRequestRef = useRef<PendingConnection | null>(null);
+	// 每次新测试、Provider 变化或卸载都推进代次，旧闭包返回后必须被忽略。
+	const generationRef = useRef(0);
 
 	/**
-	 * 清理当前测试会话的监听器与定时器。
-	 * 无论测试成功/失败/超时/卸载，都调用此函数，防止内存泄漏。
+	 * 清理指定请求持有的监听器与定时器。
+	 * 请求完成后的 cleanup 只能清理自身，避免旧 Promise 误删新请求资源。
 	 */
-	const cleanup = useCallback(() => {
-		if (listenerRef.current !== null) {
-			port.onMessage.removeListener(listenerRef.current);
-			listenerRef.current = null;
+	const cleanupRequest = useCallback((request: PendingConnection | null): void => {
+		if (!request) return;
+		request.port.onMessage.removeListener(request.onMessage);
+		request.port.onDisconnect.removeListener(request.onDisconnect);
+		if (request.timer !== null) {
+			clearTimeout(request.timer);
+			request.timer = null;
 		}
-		if (timerRef.current !== null) {
-			clearTimeout(timerRef.current);
-			timerRef.current = null;
+		if (activeRequestRef.current === request) {
+			activeRequestRef.current = null;
 		}
-	}, [port]);
+	}, []);
 
-	// 组件卸载时清理监听器与定时器，防止内存泄漏
+	/**
+	 * 使当前请求过期并主动结束等待，覆盖 Provider 变化、卸载和重新测试。
+	 * generation 先递增，保证取消 Promise 的微任务恢复时也不会写入旧状态。
+	 */
+	const invalidateRequest = useCallback((): void => {
+		generationRef.current += 1;
+		const request = activeRequestRef.current;
+		if (!request) return;
+		request.settle({ ok: false, cancelled: true });
+		cleanupRequest(request);
+	}, [cleanupRequest]);
+
+	// Provider/Port 变化时取消旧请求；Provider 身份变化由上层 key 触发组件重挂载并重置展示状态。
 	useEffect(() => {
 		return () => {
-			cleanup();
+			invalidateRequest();
 		};
-	}, [cleanup]);
-
-	// TODO-23：provider 变化时清理上一次测试残留的监听器与定时器。
-	// 切换 provider 配置时旧 listener/timer 不应再对新 provider 生效，
-	// 故在 [provider, cleanup] 变化时执行 cleanup（effect 的 cleanup 函数在下次执行前调用）。
-	useEffect(() => {
-		return () => {
-			cleanup();
-		};
-	}, [provider, cleanup]);
+	}, [provider, port, invalidateRequest]);
 
 	/**
 	 * 点击按钮触发连接测试。
@@ -118,19 +138,37 @@ export function TestConnectionButton({
 			return;
 		}
 
-		// 清理上一次测试残留的监听器与定时器
-		cleanup();
+		// 新测试使旧请求失效，并记录本次请求的代次。
+		invalidateRequest();
+		const currentGeneration = generationRef.current;
 
 		setStatus("testing");
 		setErrorMessage("");
 		setIsTimeout(false);
+
+		let request!: PendingConnection;
+		let resolveConnection!: (result: ConnectionResult) => void;
 
 		/**
 		 * SW 回复 Promise：监听 port.onMessage，
 		 * 收到 connection_result 类型消息时 resolve。
 		 */
 		const connectionPromise = new Promise<ConnectionResult>((resolve) => {
-			const onMessage = (msg: unknown) => {
+			resolveConnection = resolve;
+			request = {
+				port,
+				onMessage: () => undefined,
+				onDisconnect: () => undefined,
+				timer: null,
+				settled: false,
+				settle: (result: ConnectionResult) => {
+					if (request.settled) return;
+					request.settled = true;
+					resolveConnection(result);
+				},
+			};
+
+			request.onMessage = (msg: unknown) => {
 				// 仅处理 connection_result 类型消息，其他类型忽略
 				if (
 					typeof msg === "object" &&
@@ -140,11 +178,16 @@ export function TestConnectionButton({
 					const result = msg as {
 						type: "connection_result";
 					} & ConnectionResult;
-					resolve({ ok: result.ok, error: result.error });
+					request.settle({ ok: result.ok, error: result.error });
 				}
 			};
-			listenerRef.current = onMessage;
-			port.onMessage.addListener(onMessage);
+			// Port 断开时立即结束等待，不再依赖 12 秒超时兜底。
+			request.onDisconnect = () => {
+				request.settle({ ok: false, error: "连接已断开" });
+			};
+			activeRequestRef.current = request;
+			port.onMessage.addListener(request.onMessage);
+			port.onDisconnect.addListener(request.onDisconnect);
 		});
 
 		/**
@@ -153,8 +196,10 @@ export function TestConnectionButton({
 		 * 前端兜底仅防 Port 静默断连导致前端无限等待。
 		 */
 		const timeoutPromise = new Promise<ConnectionResult>((resolve) => {
-			timerRef.current = setTimeout(() => {
-				resolve({ ok: false, error: "连接超时" });
+			request.timer = setTimeout(() => {
+				const result = { ok: false, error: "连接超时" };
+				request.settle(result);
+				resolve(result);
 			}, FRONTEND_TIMEOUT_MS);
 		});
 
@@ -165,14 +210,22 @@ export function TestConnectionButton({
 			port.postMessage({ type: "test_connection", provider });
 		} catch {
 			// 连接已断开：置失败态 + 错误信息 + 清理 listener/timer + 提前返回
-			setStatus("fail");
-			setErrorMessage("连接已断开");
-			cleanup();
+			if (generationRef.current === currentGeneration) {
+				setStatus("fail");
+				setErrorMessage("连接已断开");
+				setIsTimeout(false);
+			}
+			cleanupRequest(request);
 			return;
 		}
 
 		// Promise.race：SW 回复与超时哪个先到用哪个
 		const result = await Promise.race([connectionPromise, timeoutPromise]);
+		// Provider 变化、组件卸载或新测试会推进代次，旧结果不得再写入状态。
+		if (generationRef.current !== currentGeneration || result.cancelled) {
+			cleanupRequest(request);
+			return;
+		}
 
 		// 根据竞速结果更新状态
 		if (result.ok) {
@@ -185,8 +238,8 @@ export function TestConnectionButton({
 		}
 
 		// 测试结束，清理监听器与定时器
-		cleanup();
-	}, [provider, port, status, cleanup]);
+		cleanupRequest(request);
+	}, [provider, port, status, invalidateRequest, cleanupRequest]);
 
 	return (
 		<div>

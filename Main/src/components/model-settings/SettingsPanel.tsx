@@ -442,7 +442,12 @@ export function SettingsPanel({
 								/>
 								{/* TestConnectionButton 接收 SettingsPanel props 的 port（SA-12 经单 Port） */}
 								<div style={{ marginTop: 8 }}>
-									<TestConnectionButton provider={activeProvider} port={port} />
+									{/* Provider 配置变化时重挂载，避免旧测试状态残留到新配置。 */}
+									<TestConnectionButton
+										key={JSON.stringify(activeProvider)}
+										provider={activeProvider}
+										port={port}
+									/>
 								</div>
 							</div>
 						)}
