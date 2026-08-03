@@ -16,6 +16,7 @@
 - Do not change production source, protocol types, reducers, render components, or test fixture infrastructure.
 - Keep the two batches distinguishable by unique `bvid`, title, and author values.
 - Include `index: 0` in each streamed `tool_calls` item because `@ai-sdk/openai@4.0.11` validates that field.
+- Return a normal non-stream JSON completion for `generate_title` requests whose body does not set `stream: true`; count only `stream: true` requests as chat turns.
 - Do not claim rerank reuse, insight anchor alignment, batch-count limits, or cross-tab synchronization from this test.
 
 ---
@@ -29,6 +30,7 @@
 **Interfaces:**
 - `buildToolCallSseStream(keyword = "退退退", toolCallId = "call_mock_search_1"): string` returns an SSE tool call whose arguments contain the provided keyword and whose tool call id is unique per search.
 - `buildTextSseStream(keyword = "退退退"): string` returns the final text SSE for that keyword.
+- `buildTitleResponse(keyword = "退退退"): string` returns a non-stream OpenAI chat completion JSON body for the parallel title request.
 - `buildBilibiliSearchResponse(batch = "first"): string` returns two deterministic results for either the first or second batch.
 
 - [ ] **Step 1: Update the tool-call helper without changing its default behavior.**
@@ -192,7 +194,26 @@ function buildBilibiliSearchResponse(batch: SearchBatch = "first"): string {
 
 The response must remain a valid `search/type` payload with `code: 0`, `data.page`, `data.pagesize`, and `data.result`.
 
-- [ ] **Step 4: Run the existing one-search E2E test.**
+- [ ] **Step 4: Add a non-stream title response helper.**
+
+Add this helper so `generate_title` does not consume a chat SSE slot or inject a parse error into the shared Port. The title request omits `stream`, so the route must treat only `stream === true` as a chat turn:
+
+```ts
+function buildTitleResponse(keyword = "退退退"): string {
+  return JSON.stringify({
+    id: "cmpl_mock_title",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: `${keyword}搜索` },
+        finish_reason: "stop",
+      },
+    ],
+  });
+}
+```
+
+- [ ] **Step 5: Run the existing one-search E2E test.**
 
 Run from `Main/`:
 
@@ -217,6 +238,8 @@ Expected: the existing test passes and still sees two first-batch cards. This pr
 Use the existing configured settings and harness. Route `/chat/completions` by request number:
 
 ```ts
+let chatRequestCount = 0;
+let titleRequestCount = 0;
 const aiBodies = [
   () => buildToolCallSseStream("退退退", "call_mock_search_1"),
   () => buildTextSseStream("退退退"),
@@ -229,8 +252,19 @@ await context.route("**/chat/completions", async (route) => {
     await route.fulfill({ status: 204, headers: corsHeaders() });
     return;
   }
-  aiRequestCount += 1;
-  const body = aiBodies[aiRequestCount - 1]?.() ?? buildTextSseStream("第二次");
+  const requestBody = (route.request().postDataJSON() as { stream?: boolean } | null) ?? {};
+  if (requestBody.stream !== true) {
+    titleRequestCount += 1;
+    await route.fulfill({
+      status: 200,
+      headers: { ...corsHeaders(), "Content-Type": "application/json" },
+      body: buildTitleResponse("第二次"),
+    });
+    return;
+  }
+  chatRequestCount += 1;
+  const body = aiBodies[chatRequestCount - 1];
+  if (body === undefined) throw new Error("unexpected extra streaming AI request");
   await route.fulfill({
     status: 200,
     headers: { ...corsHeaders(), "Content-Type": "text/event-stream" },
@@ -255,7 +289,7 @@ Wait for the send button to become enabled again, fill the second query, click s
 
 - [ ] **Step 5: Assert mock request counts.**
 
-Assert `aiRequestCount === 4` and `bilibiliSearchHits === 2`. A failure here means the E2E driver did not complete two independent Agent turns and cannot support an S-3 conclusion.
+Assert `chatRequestCount === 4`, `titleRequestCount >= 1`, and `bilibiliSearchHits === 2`. A failure here means the E2E driver did not complete two independent Agent turns and cannot support an S-3 conclusion.
 
 - [ ] **Step 6: Prove the regression test is falsifiable.**
 
