@@ -311,12 +311,12 @@ useEffect(() => {
 
 ## 完成状态
 
-- **状态**: pending
+- **状态**: needs_review
 - **状态变更条件**:
   - 代码实现完成并自检通过 -> `in_progress`
-  - 单元测试覆盖 `onDisconnect` 即时反馈、三路竞速 cleanup、卸载/Provider 变化清理 -> `needs_review`
+  - 单元测试覆盖 `onDisconnect` 即时反馈、三路竞速 cleanup、卸载/Provider 变化清理 -> `needs_review`（已达成）
   - 与 R-3 联合审查通过且 E2E 冒烟验证通过（依赖阶段0）-> `completed`
-- **状态变更记录**: 无（待修复开始后记录）
+- **状态变更记录**: 2026-08-03：`TestConnectionButton` 接入 `onDisconnect` 和请求级 cleanup，18 个组件测试通过；E2E 断线时间证据待阶段0通道。
 
 ## 联合审查说明
 

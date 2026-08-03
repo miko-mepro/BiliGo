@@ -81,6 +81,70 @@ function isAbortError(err: unknown): boolean {
   return false
 }
 
+function isErrorRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/**
+ * AI SDK 可能传递原始 Error，也可能传递字符串化错误；两种形态都需要保留错误名。
+ */
+function getToolErrorName(error: unknown): string | undefined {
+  if (error instanceof Error) return error.name
+  if (isErrorRecord(error) && typeof error.name === 'string') return error.name
+  if (typeof error === 'string') {
+    return /^(Bilibili(?:Network|Risk|Api)Error)\s*:/i.exec(error)?.[1]
+  }
+  return undefined
+}
+
+function getToolErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (isErrorRecord(error) && typeof error.message === 'string') return error.message
+  return typeof error === 'string' ? error : String(error)
+}
+
+function hasSerializedToolErrorName(error: unknown, name: string): boolean {
+  const text = getToolErrorMessage(error)
+  return new RegExp(`\\b${name}\\s*:`, 'i').test(text)
+}
+
+/**
+ * 在 tool-error 边界区分 Bilibili 网络/业务错误与普通工具错误。
+ * 网络错误复用 N-1 的结构化 cause 分类；普通错误保留工具名，避免误报为网络故障。
+ */
+function classifyToolError(
+  toolName: string,
+  error: unknown,
+): { code: string; message: string } {
+  const errorName = getToolErrorName(error)
+  const errorText = getToolErrorMessage(error)
+  const isNetworkError = errorName === 'BilibiliNetworkError'
+    || hasSerializedToolErrorName(error, 'BilibiliNetworkError')
+    || /Bilibili\s+search\s+request\s+failed\s*:/i.test(errorText)
+
+  if (isNetworkError) {
+    const code = inferErrorCode(error)
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const isRiskError = errorName === 'BilibiliRiskError'
+    || hasSerializedToolErrorName(error, 'BilibiliRiskError')
+  if (isRiskError) {
+    const code = 'BILIBILI_RISK'
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const isApiError = errorName === 'BilibiliApiError'
+    || hasSerializedToolErrorName(error, 'BilibiliApiError')
+  if (isApiError) {
+    const code = 'BILIBILI_API'
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const code = inferErrorCode(error)
+  return { code, message: `工具 ${toolName} 执行失败: ${errorText}` }
+}
+
 function resolveActiveProvider(
   providers: ProviderConfig[],
   activeProviderId: string | null,
@@ -396,15 +460,11 @@ export async function handleChatMessage(
           break
         }
         case 'tool-error': {
-          const errorText = String(part.error)
-          const code = inferErrorCode(part.error)
-          // 含工具名上下文（4.2 SC-1）：直接使用 toolContextMessage 作为 message，
-          // 而非 friendlyMessage(code, ...)。因为 friendlyMessage 对已知 code 返回
-          // 固定文案会丢弃工具名上下文。
-          const toolContextMessage = `工具 ${part.toolName} 执行失败: ${errorText}`
+          // N-4：Bilibili 网络/业务错误走统一语义，普通工具错误保留工具名上下文。
+          const { code, message } = classifyToolError(part.toolName, part.error)
           postToPort(port, session, {
             type: 'error',
-            message: toolContextMessage,
+            message,
             code,
           })
           break streamLoop

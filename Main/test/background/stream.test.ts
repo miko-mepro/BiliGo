@@ -792,6 +792,82 @@ describe('tool auxiliary messages', () => {
     expect(errorMsg!.message).toContain('timeout')
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
+  it('classifies BilibiliNetworkError with its structured cause', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = Object.assign(
+      new Error('Bilibili search request failed: fetch failed'),
+      { name: 'BilibiliNetworkError', cause: { code: 'ENOTFOUND' } },
+    )
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_net', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'DNS_ERROR',
+      message: '域名解析失败，请检查 Base URL 或网络',
+    })
+  })
+
+  it('classifies stringified BilibiliNetworkError HTTP failures', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolErrorPart(
+          'BilibiliNetworkError: Bilibili search request failed: HTTP 500',
+          'call_net_http',
+          'bilibili_search',
+        ),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'SERVER_ERROR',
+      message: '服务端异常，请稍后重试',
+    })
+  })
+
+  it('keeps Bilibili risk errors in business-error semantics', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = new Error('Bilibili risk control triggered')
+    error.name = 'BilibiliRiskError'
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_risk', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'BILIBILI_RISK',
+      message: '触发风控，请稍后再试或登录 B站',
+    })
+  })
+
+  it('keeps Bilibili API errors in business-error semantics', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = new Error('Bilibili API returned code -509')
+    error.name = 'BilibiliApiError'
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_api', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'BILIBILI_API',
+      message: 'B站接口异常',
+    })
+  })
+
 
   it('registers 5 tools with streamText', async () => {
     setupValidProvider()
