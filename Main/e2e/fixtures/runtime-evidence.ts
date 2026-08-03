@@ -55,7 +55,7 @@ function timestamp(): string {
 }
 
 /** URL 只保留 origin 与 pathname，避免 query 参数泄漏凭据。 */
-function redactUrl(rawUrl: string): string {
+export function redactUrl(rawUrl: string): string {
 	try {
 		const url = new URL(rawUrl);
 		if (url.origin === "null") return `${url.protocol}//${url.host}${url.pathname}`.slice(0, MAX_TEXT_LENGTH);
@@ -66,7 +66,7 @@ function redactUrl(rawUrl: string): string {
 }
 
 /** 控制台错误命中敏感词时整条替换，而不是尝试逐字段猜测凭据边界。 */
-function redactText(rawText: string): string {
+export function redactText(rawText: string): string {
 	const text = rawText.slice(0, MAX_TEXT_LENGTH);
 	return SENSITIVE_TEXT.test(text) ? "[REDACTED SENSITIVE MESSAGE]" : text;
 }

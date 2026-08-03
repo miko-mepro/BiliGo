@@ -28,7 +28,7 @@ import {
 	type StorageSeedOptions,
 	seedSettingsToStorage,
 } from "./chrome-mock.js";
-import { recordDomSnapshot } from "./runtime-evidence.js";
+import { recordDomSnapshot, redactText, redactUrl } from "./runtime-evidence.js";
 
 /** 扩展辅助选项 */
 export interface HarnessOptions extends StorageSeedOptions {
@@ -84,8 +84,31 @@ export async function openBilibiliWithMockedExtension(
 		});
 	}
 	page.on("console", (message) => {
-		if (message.type() === "error") pageConsoleErrors.push(message.text());
+		if (message.type() === "error") pageConsoleErrors.push(redactText(message.text()));
 	});
+
+	// 诊断上下文：所有错误分支统一附带 SW 状态 + DOM 状态 + 断开记录 + 控制台错误，
+	// 确保任意失败点都能输出完整的可观测证据（AC7）。
+	const buildDiagnostics = async (includeDom: boolean): Promise<string> => {
+		const swUrls = context
+			.serviceWorkers()
+			.map((worker) => redactUrl(worker.url()));
+		const lines = [
+			`SW 状态: ${formatList(swUrls.length > 0 ? swUrls : ["无"])}`,
+		];
+		if (includeDom) {
+			const domState = await readDomState(page).catch(() => ({
+				hostExists: false,
+				shadowExists: false,
+				toggleExists: false,
+				toggleVisible: false,
+			}));
+			lines.push(`DOM 状态: ${JSON.stringify(domState)}`);
+		}
+		lines.push(`浏览器断开记录: ${formatList(disconnectErrors)}`);
+		lines.push(`页面控制台错误: ${formatList(pageConsoleErrors)}`);
+		return lines.join("\n");
+	};
 
 	try {
 		// 1. 导航到 bilibili，content script 会由扩展自动注入 isolated world。
@@ -95,9 +118,8 @@ export async function openBilibiliWithMockedExtension(
 		});
 	} catch (error) {
 		throw new Error(
-			`page.goto 失败 (url=${url}): ${formatError(error)}\n` +
-			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
-			`页面控制台错误: ${formatList(pageConsoleErrors)}`,
+			`page.goto 失败 (url=${redactUrl(url)}): ${formatError(error)}\n` +
+			await buildDiagnostics(true),
 			{ cause: error },
 		);
 	}
@@ -106,10 +128,19 @@ export async function openBilibiliWithMockedExtension(
 
 
 	// 2a. 先确认扩展 SW，区分扩展未加载与页面脚本未注入。
-	const serviceWorker = await waitForExtensionServiceWorker(
-		context,
-		Math.max(1_000, Math.floor(csTimeout / 2)),
-	);
+	try {
+		await waitForExtensionServiceWorker(
+			context,
+			Math.max(1_000, Math.floor(csTimeout / 2)),
+		);
+	} catch (error) {
+		// SW 启动失败也输出完整诊断（AC7：字段统一）。
+		throw new Error(
+			`${formatError(error)}\n` +
+			await buildDiagnostics(true),
+			{ cause: error },
+		);
+	}
 
 	// 2b. host 创建不依赖 storage 返回，能准确定位 content script 注入边界。
 	try {
@@ -118,15 +149,9 @@ export async function openBilibiliWithMockedExtension(
 			timeout: Math.max(1_000, Math.floor(csTimeout / 2)),
 		});
 	} catch (error) {
-		const swState = await serviceWorker
-			.evaluate(() => ({ url: self.location.href }))
-			.catch(() => ({ url: "SW evaluate failed" }));
 		throw new Error(
 			`content script 未注入: host 元素 #bili-agent-host 未出现\n` +
-			`SW 状态: ${JSON.stringify(swState)}\n` +
-			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
-			`页面控制台错误: ${formatList(pageConsoleErrors)}\n` +
-			`原始错误: ${formatError(error)}`,
+			await buildDiagnostics(true),
 			{ cause: error },
 		);
 	}
@@ -139,13 +164,9 @@ export async function openBilibiliWithMockedExtension(
 			timeout: csTimeout * 2,
 		});
 	} catch (error) {
-		const readyState = await readDomState(page);
 		throw new Error(
 			`toggle 按钮未出现: content script 已注入但 isReady 未就绪\n` +
-			`DOM 状态: ${JSON.stringify(readyState)}\n` +
-			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
-			`页面控制台错误: ${formatList(pageConsoleErrors)}\n` +
-			`原始错误: ${formatError(error)}`,
+			await buildDiagnostics(true),
 			{ cause: error },
 		);
 	}
