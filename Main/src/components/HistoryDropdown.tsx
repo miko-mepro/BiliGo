@@ -85,11 +85,24 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
   const inputRef = useRef<HTMLInputElement>(null)
   // 持有 HistorySync 实例，组件卸载时 stop
   const syncRef = useRef<HistorySync | null>(null)
+  // 标记组件卸载，防止 pending 的重命名 Promise 返回后写入过期状态。
+  const renameCancelRef = useRef(false)
+
+  // 组件重新挂载时允许新的重命名；卸载后旧闭包只能忽略结果。
+  useEffect(() => {
+    renameCancelRef.current = false
+    return () => {
+      renameCancelRef.current = true
+    }
+  }, [])
 
   // 展开时加载历史索引
   useEffect(() => {
     if (!isOpen) return
     let cancelled = false
+    // 打开下拉后先进入 loading，避免异步索引返回前误显示“暂无记录”。
+    // 此处是该 effect 的明确 UI 入口，保留同步状态切换并局部豁免规则。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     getIndex()
       .then((fetchedRecords) => {
@@ -131,7 +144,7 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
       inputRef.current.focus()
       inputRef.current.select()
     }
-  }, [editing?.id])
+  }, [editing])
 
   const handleLoad = useCallback(
     async (id: string) => {
@@ -181,14 +194,21 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
       }
       try {
         await onRename(id, newTitle)
+        // 视图切换会卸载组件，异步完成后不得再更新旧历史列表。
+        if (renameCancelRef.current) return
         setRecords((prev) =>
           prev.map((item) => (item.id === id ? { ...item, title: newTitle } : item)),
         )
       } catch (err) {
+        // 卸载后的失败属于已取消请求，不输出旧组件的错误日志。
+        if (renameCancelRef.current) return
         console.warn('[BiliAgent] history onRename failed', err)
       } finally {
-        editingRef.current = false
-        setEditing(null)
+        // editing 状态和 ref 也属于组件状态，卸载后不再写入。
+        if (!renameCancelRef.current) {
+          editingRef.current = false
+          setEditing(null)
+        }
       }
     },
     [editing, onRename],

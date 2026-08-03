@@ -1,6 +1,6 @@
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { HistoryDropdown } from '../../src/components/HistoryDropdown.js'
 import type { ConversationRecord } from '../../src/lib/shared-types/index.js'
 
@@ -95,7 +95,44 @@ describe('HistoryDropdown', () => {
     const input = await screen.findByDisplayValue('原名')
     fireEvent.change(input, { target: { value: '新名' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(props.onRename).toHaveBeenCalledWith('c1', '新名'))
+    await waitFor(() => {
+      expect(props.onRename).toHaveBeenCalledWith('c1', '新名')
+      expect(screen.getByText('新名')).toBeInTheDocument()
+    })
+  })
+
+  it('unmounted rename ignores a later rejection', async () => {
+    let rejectRename: ((reason: Error) => void) | undefined
+    const onRename = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRename = reject
+        }),
+    )
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const records = [makeRecord({ id: 'c1', title: '待重命名' })]
+    const props = {
+      ...defaultProps,
+      getIndex: vi.fn(() => Promise.resolve(records)),
+      onRename,
+    }
+    const { unmount } = render(<HistoryDropdown {...props} />)
+    await waitFor(() => expect(screen.getByText('待重命名')).toBeInTheDocument())
+
+    fireEvent.doubleClick(screen.getByText('待重命名'))
+    const input = await screen.findByDisplayValue('待重命名')
+    fireEvent.change(input, { target: { value: '新标题' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onRename).toHaveBeenCalledWith('c1', '新标题')
+
+    unmount()
+    await act(async () => {
+      rejectRename?.(new Error('rename failed'))
+      await Promise.resolve()
+    })
+
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('filters records by search query', async () => {
