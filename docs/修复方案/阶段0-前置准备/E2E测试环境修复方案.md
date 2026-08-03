@@ -4,7 +4,7 @@
 > **对应问题档案**：`docs/问题档案/05-测试与验证缺口/E2E运行阻塞问题.md`
 > **来源记录**：`docs/渲染崩溃问题记录.md`
 > **关联假设**：`docs/问题档案/06-待验证假设/搜索结果高风险假设清单.md`（S-V5 service worker 消息到达间隔）
-> **完成状态**：pending
+> **完成状态**：needs_review
 
 ## 1. 问题定位
 
@@ -699,7 +699,7 @@ cd Main && git checkout -- e2e/fixtures/extension-harness.ts playwright.config.t
 
 ## 13. 完成状态
 
-**当前状态**：pending
+**当前状态**：needs_review
 
 状态变更条件：
 
