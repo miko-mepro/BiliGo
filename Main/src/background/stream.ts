@@ -237,9 +237,10 @@ function buildTools(traceId: string): ToolSet {
 /**
  * 在 tool-result 事件中按 toolName 推送附加的 videos/insight 消息（3.2 §6 / §9.2）。
  *
- * 顺序保证（3.2 §9.2）：tool_start -> videos/insight -> tool_result。
- * 本函数在 tool-result case 中先推送附加消息（videos/insight），
- * 再由调用方推送 tool_result，从而保证顺序为 tool_start -> videos/insight -> tool_result。
+ * 顺序（S-1 决策 A1）：tool_start -> tool_result -> videos/insight -> done。
+ * 调用方先推送 tool_result，再调用本函数推送附加消息（videos/insight），
+ * 即 A1 仅把完成消息排在辅助内容之前、收窄时序窗口；
+ * 不提供原子 UI 更新，实际浏览器 UX 仍待运行时/E2E 验证。
  *
  * @param toolInput 该 toolCallId 对应的 tool-call 事件 input（video_rerank 需要从中取原始候选视频列表）
  * @param toolCallId 该次工具调用的唯一标识，用于派生视频批次 batchId（S-3）
@@ -312,7 +313,7 @@ function postToolAuxiliaryMessages(
       })
       break
     default:
-      // 未知工具名：不附加消息，仅推送 tool_result
+      // 未知工具名：不附加消息，仅由调用方推送 tool_result
       break
   }
 }
@@ -445,15 +446,19 @@ export async function handleChatMessage(
           })
           break
         case 'tool-result': {
-          // 先推送附加 videos/insight 消息（3.2 §9.2 顺序：tool_start -> videos/insight -> tool_result）
+          // S-1 决策 A1：先推送 tool_result，再推送附加 videos/insight 消息。
+          // 顺序为 tool_start -> tool_result -> videos/insight -> done。
+          // A1 仅把完成消息排在辅助内容之前、收窄时序窗口；
+          // 不提供原子 UI 更新，浏览器实际 UX 仍待运行时/E2E 验证。
           const toolInput = toolInputs.get(part.toolCallId)
-          // 传入 toolCallId 用于派生视频批次标识（S-3）
-          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
           toolInputs.delete(part.toolCallId)
-          // 再推送 tool_result
+          // 先推送 tool_result
           postToPort(port, session, {
             type: 'tool_result',
             toolCallId: part.toolCallId,
+          // 再推送附加 videos/insight 消息
+          // 传入 toolCallId 用于派生视频批次标识（S-3）
+          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
             toolName: part.toolName,
             result: part.output,
           })

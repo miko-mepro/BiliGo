@@ -469,7 +469,7 @@ describe('protocol', () => {
 })
 
 describe('tool auxiliary messages', () => {
-  it('pushes tool_start + insight(understanding) + tool_result for slang_understand', async () => {
+  it('pushes tool_start + tool_result + insight(understanding) for slang_understand (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -486,7 +486,7 @@ describe('tool auxiliary messages', () => {
       ),
     )
     await handleChatMessage(port, session, makeChatMsg())
-    // 顺序：tool_start -> insight(understanding) -> tool_result -> done
+    // S-1 决策 A1 顺序：tool_start -> tool_result -> insight(understanding) -> done
     expect(posted).toContainEqual({
       type: 'tool_start',
       toolCallId: 'call_u1',
@@ -504,7 +504,7 @@ describe('tool auxiliary messages', () => {
       toolName: 'slang_understand',
       result: understanding,
     })
-    // 顺序断言：insight 在 tool_result 之前
+    // 顺序断言：tool_result 在 insight(understanding) 之前（S-1 决策 A1）
     const insightIdx = posted.findIndex(
       (m) => m.type === 'insight' && m.kind === 'understanding',
     )
@@ -512,11 +512,11 @@ describe('tool auxiliary messages', () => {
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_u1',
     )
     expect(insightIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + videos + tool_result for bilibili_search', async () => {
+  it('pushes tool_start + tool_result + videos for bilibili_search (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -550,17 +550,17 @@ describe('tool auxiliary messages', () => {
       toolName: 'bilibili_search',
       result: videos,
     })
-    // 顺序：videos 在 tool_result 之前
+    // 顺序：videos 在 tool_result 之后（S-1 决策 A1）
     const videosIdx = posted.findIndex((m) => m.type === 'videos')
     const toolResultIdx = posted.findIndex(
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_s1',
     )
     expect(videosIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(videosIdx)
+    expect(videosIdx).toBeGreaterThan(toolResultIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + insight(rerank) + videos(reordered) + tool_result for video_rerank', async () => {
+  it('pushes tool_start + tool_result + insight(rerank) + videos(reordered) for video_rerank (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -614,7 +614,7 @@ describe('tool auxiliary messages', () => {
       toolName: 'video_rerank',
       result: rerankResult,
     })
-    // 顺序：insight(rerank) -> videos -> tool_result
+    // S-1 决策 A1 顺序：tool_start -> tool_result -> insight(rerank) -> videos(reordered)
     const insightIdx = posted.findIndex((m) => m.type === 'insight' && m.kind === 'rerank')
     const videosIdx = posted.findIndex(
       (m) => m.type === 'videos' && m.videos?.[0]?.bvid === 'BV2',
@@ -622,9 +622,10 @@ describe('tool auxiliary messages', () => {
     const toolResultIdx = posted.findIndex(
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_r1',
     )
+    // tool_result 在 insight(rerank) 和 videos 之前
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(insightIdx).toBeGreaterThanOrEqual(0)
     expect(videosIdx).toBeGreaterThan(insightIdx)
-    expect(toolResultIdx).toBeGreaterThan(videosIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
@@ -690,7 +691,7 @@ describe('tool auxiliary messages', () => {
     expect(videoMsgs[0].batchId).not.toBe(videoMsgs[1].batchId)
   })
 
-  it('pushes tool_start + insight(clarification) + tool_result for ask_clarification', async () => {
+  it('pushes tool_start + tool_result + insight(clarification) for ask_clarification (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -738,11 +739,12 @@ describe('tool auxiliary messages', () => {
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_c1',
     )
     expect(insightIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    // S-1 决策 A1：tool_result 在 insight(clarification) 之前
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + insight(expansion) + tool_result for query_expand', async () => {
+  it('pushes tool_start + tool_result + insight(expansion) for query_expand (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -756,11 +758,38 @@ describe('tool auxiliary messages', () => {
       streamOf(
         toolCall('call_e1', 'query_expand', { query: '鬼畜' }),
         toolResult('call_e1', 'query_expand', expansion),
+    expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_e1',
+      toolName: 'query_expand',
+      args: { query: '鬼畜' },
+    })
       ),
     )
     await handleChatMessage(port, session, makeChatMsg())
     expect(posted).toContainEqual({
       type: 'insight',
+    // S-1 决策 A1 全序列顺序：tool_start -> tool_result -> insight(expansion) -> done
+    const toolStartIdx = posted.findIndex(
+      (m) => m.type === 'tool_start' && m.toolCallId === 'call_e1',
+    )
+    const insightIdx = posted.findIndex(
+      (m) => m.type === 'insight' && m.kind === 'expansion',
+    )
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_e1',
+    )
+    const doneIdx = posted.findIndex((m) => m.type === 'done')
+    expect(toolStartIdx).toBeGreaterThanOrEqual(0)
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
+    expect(doneIdx).toBeGreaterThanOrEqual(0)
+    // 严格顺序断言：tool_start < tool_result < insight < done
+    expect(toolStartIdx).toBeLessThan(toolResultIdx)
+    expect(toolResultIdx).toBeLessThan(insightIdx)
+    expect(insightIdx).toBeLessThan(doneIdx)
+    // 终端事件断言：done 是最后一条消息且只出现一次
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    expect(posted.filter((m) => m.type === 'done')).toHaveLength(1)
       kind: 'expansion',
       data: expansion,
     })
