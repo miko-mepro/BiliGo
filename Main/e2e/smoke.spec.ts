@@ -16,7 +16,8 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures/extension-fixture.js";
 import { emptySettings, type SeedSettings } from "./fixtures/chrome-mock.js";
 import {
 	backToChat,

@@ -25,7 +25,8 @@
  */
 
 import type { BrowserContext } from "@playwright/test";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures/extension-fixture.js";
 import type { SeedSettings } from "./fixtures/chrome-mock.js";
 import {
 	openBilibiliWithMockedExtension,

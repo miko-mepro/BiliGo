@@ -21,13 +21,14 @@
  * 才会触发扩展自动注入。
  */
 
-import type { Locator, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page, Worker } from "@playwright/test";
 import { expect } from "@playwright/test";
 import {
 	SETTINGS_STORAGE_KEY,
 	type StorageSeedOptions,
 	seedSettingsToStorage,
 } from "./chrome-mock.js";
+import { recordDomSnapshot } from "./runtime-evidence.js";
 
 /** 扩展辅助选项 */
 export interface HarnessOptions extends StorageSeedOptions {
@@ -73,38 +74,147 @@ export async function openBilibiliWithMockedExtension(
 	const csTimeout = options.contentScriptTimeoutMs ?? DEFAULT_CS_TIMEOUT;
 	const settingsKey = options.settingsKey ?? SETTINGS_STORAGE_KEY;
 
-	// 1. 导航到 bilibili（content script 会由扩展自动注入 isolated world）
-	await page.goto(url, {
-		timeout: navTimeout,
-		waitUntil: "domcontentloaded",
+	const context = page.context();
+	const browser = context.browser();
+	const disconnectErrors: string[] = [];
+	const pageConsoleErrors: string[] = [];
+	if (browser) {
+		browser.on("disconnected", () => {
+			disconnectErrors.push(`browser disconnected at ${new Date().toISOString()}`);
+		});
+	}
+	page.on("console", (message) => {
+		if (message.type() === "error") pageConsoleErrors.push(message.text());
 	});
 
-	// 2. 等待 toggle 按钮出现，确认 content script 已挂载
-	//    toggle 按钮带 data-bili-agent-toggle 属性，在 Shadow DOM 内
-	//    Playwright 默认穿透 open Shadow DOM，直接用属性选择器即可
-	await page
-		.locator("[data-bili-agent-toggle]")
-		.waitFor({ state: "visible", timeout: csTimeout });
+	try {
+		// 1. 导航到 bilibili，content script 会由扩展自动注入 isolated world。
+		await page.goto(url, {
+			timeout: navTimeout,
+			waitUntil: "domcontentloaded",
+		});
+	} catch (error) {
+		throw new Error(
+			`page.goto 失败 (url=${url}): ${formatError(error)}\n` +
+			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
+			`页面控制台错误: ${formatList(pageConsoleErrors)}`,
+			{ cause: error },
+		);
+	}
 
-	// 3. 若提供了 settings 选项，播种到真实 chrome.storage.local
-	//    通过 service worker 上下文执行（普通网页 main world 无 chrome 全局对象，
-	//    P5-2.1 reviewer 第二次 REJECTED CRITICAL 修复）
-	//
-	// 守卫修复（P5-2.1 reviewer 第三次 REJECTED MEDIUM）：
-	// 原代码 const settings = options.settings ?? null 会把 undefined 转为 null，
-	// 导致 if (settings !== undefined) 永远为 true，undefined 语义（不碰 storage）
-	// 被错误折叠成 null 语义（清除 storage）。
-	// 修正：在 null 合并前检查原始 options.settings，三种语义正确区分：
-	//   undefined -> 跳过播种（不碰 storage）
-	//   null      -> 清除 storage
-	//   对象      -> 播种到 storage
+	await recordDomSnapshot(page, "after-navigation");
+
+
+	// 2a. 先确认扩展 SW，区分扩展未加载与页面脚本未注入。
+	const serviceWorker = await waitForExtensionServiceWorker(
+		context,
+		Math.max(1_000, Math.floor(csTimeout / 2)),
+	);
+
+	// 2b. host 创建不依赖 storage 返回，能准确定位 content script 注入边界。
+	try {
+		await page.locator("#bili-agent-host").waitFor({
+			state: "attached",
+			timeout: Math.max(1_000, Math.floor(csTimeout / 2)),
+		});
+	} catch (error) {
+		const swState = await serviceWorker
+			.evaluate(() => ({ url: self.location.href }))
+			.catch(() => ({ url: "SW evaluate failed" }));
+		throw new Error(
+			`content script 未注入: host 元素 #bili-agent-host 未出现\n` +
+			`SW 状态: ${JSON.stringify(swState)}\n` +
+			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
+			`页面控制台错误: ${formatList(pageConsoleErrors)}\n` +
+			`原始错误: ${formatError(error)}`,
+			{ cause: error },
+		);
+	}
+	await recordDomSnapshot(page, "content-script-mounted");
+
+	// 2c. toggle 依赖 storage.get 完成，单独延长等待并报告 DOM 状态。
+	try {
+		await page.locator("[data-bili-agent-toggle]").waitFor({
+			state: "visible",
+			timeout: csTimeout * 2,
+		});
+	} catch (error) {
+		const readyState = await readDomState(page);
+		throw new Error(
+			`toggle 按钮未出现: content script 已注入但 isReady 未就绪\n` +
+			`DOM 状态: ${JSON.stringify(readyState)}\n` +
+			`浏览器断开记录: ${formatList(disconnectErrors)}\n` +
+			`页面控制台错误: ${formatList(pageConsoleErrors)}\n` +
+			`原始错误: ${formatError(error)}`,
+			{ cause: error },
+		);
+	}
+	await recordDomSnapshot(page, "first-render-ready");
+
+	// 3. 若提供 settings，继续通过扩展 SW 操纵真实 chrome.storage.local。
 	if (options.settings !== undefined) {
 		const settings = options.settings ?? null;
-		// page.context() 获取所属 BrowserContext，从中取扩展 service worker
-		await seedSettingsToStorage(page.context(), settings, settingsKey);
+		await seedSettingsToStorage(context, settings, settingsKey);
 	}
 
 	return page;
+}
+
+/** 轮询扩展 service worker，过滤页面自身可能注册的 web worker。 */
+async function waitForExtensionServiceWorker(
+	context: BrowserContext,
+	timeoutMs: number,
+): Promise<Worker> {
+	const existing = context
+		.serviceWorkers()
+		.find((worker) => worker.url().startsWith("chrome-extension://"));
+	if (existing) return existing;
+
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const remaining = deadline - Date.now();
+		try {
+			const worker = await context.waitForEvent("serviceworker", {
+				timeout: remaining,
+			});
+			if (worker.url().startsWith("chrome-extension://")) return worker;
+		} catch {
+			break;
+		}
+	}
+
+	throw new Error(
+		`扩展 service worker 未在 ${timeoutMs}ms 内启动\n` +
+		`当前 context 中的 SW: ${formatList(context.serviceWorkers().map((worker) => worker.url()))}`,
+	);
+}
+
+/** 读取失败时的最小 DOM 状态，避免错误信息只能显示一个通用超时。 */
+async function readDomState(page: Page): Promise<Record<string, boolean>> {
+	return page.evaluate(() => {
+		const host = document.getElementById("bili-agent-host");
+		const shadow = host?.shadowRoot;
+		const toggle = shadow?.querySelector<HTMLElement>("[data-bili-agent-toggle]");
+		return {
+			hostExists: host !== null,
+			shadowExists: shadow !== undefined,
+			toggleExists: toggle !== null,
+			toggleVisible: toggle
+				? getComputedStyle(toggle).display !== "none" &&
+					getComputedStyle(toggle).visibility !== "hidden"
+				: false,
+		};
+	});
+}
+
+/** 限制诊断数组长度，避免网络/控制台错误把失败报告刷屏。 */
+function formatList(values: string[]): string {
+	return values.length > 0 ? values.slice(0, 5).join("; ") : "无";
+}
+
+/** 将未知异常转换成稳定的错误文本。 */
+function formatError(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 /**

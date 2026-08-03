@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures/extension-fixture.js";
 
 test("extension startup probe verifies the MV3 runtime boundaries", async ({
 	context,
