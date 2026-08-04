@@ -1,4 +1,4 @@
-import { generateObject, generateText } from 'ai'
+import { generateObject, streamText } from 'ai'
 import type { ModelMessage } from 'ai'
 import { z } from 'zod'
 import type { ChatMessage } from '../lib/shared-types/index.js'
@@ -11,7 +11,8 @@ import { createModel } from '../config/provider-factory.js'
  *
  * 优先使用 AI SDK `generateObject`（当传入 zod schema 时），借助 schema 校验直接拿到
  * 结构化对象；若 provider 不支持 `generateObject`、未传 schema、或调用抛出任何异常，
- * 降级到 `generateText` + `parseJsonFromText` 容错解析。
+ * 降级到 `streamText` + `parseJsonFromText` 容错解析。文本路径使用空闲超时，
+ * 每收到新的模型输出都会重新计时，避免把正常的长响应误判为卡死。
  *
  * 任何失败路径都返回 null，绝不向调用方抛出异常（见 3.3 §8.1）。
  *
@@ -23,6 +24,7 @@ import { createModel } from '../config/provider-factory.js'
 export async function callLlmForJson<T>(
   messages: ChatMessage[],
   schema?: z.Schema<T>,
+  options: LlmJsonOptions = {},
 ): Promise<T | null> {
   try {
     const settings = await readBiliAgentSettings()
@@ -34,13 +36,26 @@ export async function callLlmForJson<T>(
     const model = createModel(config)
     const { system, rest } = splitSystemMessage(messages)
     const modelMessages = toModelMessages(rest)
+    const inactivityTimeoutMs = resolveInactivityTimeout(options.inactivityTimeoutMs)
 
     if (schema) {
-      const object = await tryGenerateObject<T>(model, schema, modelMessages, system)
+      const object = await tryGenerateObject<T>(
+        model,
+        schema,
+        modelMessages,
+        system,
+        inactivityTimeoutMs,
+      )
       if (object !== null) return object
     }
 
-    const text = await tryGenerateText(model, modelMessages, system)
+    const text = await tryGenerateText(
+      model,
+      modelMessages,
+      system,
+      inactivityTimeoutMs,
+      options.onActivity,
+    )
     if (text === null) return null
     if (text.trim() === '') return null
 
@@ -119,6 +134,7 @@ async function tryGenerateObject<T>(
   schema: z.Schema<T>,
   messages: ModelMessage[],
   system: string | undefined,
+  inactivityTimeoutMs: number,
 ): Promise<T | null> {
   try {
     // zod 4 的 z.Schema<T> 等价于 $ZodType，运行时被 generateObject 当作
@@ -128,7 +144,8 @@ async function tryGenerateObject<T>(
       model,
       schema,
       messages,
-      abortSignal: AbortSignal.timeout(30_000),
+      // generateObject 没有可观察的 token 流，只能把空闲阈值作为本次调用上限。
+      abortSignal: AbortSignal.timeout(inactivityTimeoutMs),
       ...(system ? { system } : {}),
     } as unknown as Parameters<typeof generateObject>[0]
     const result = await generateObject(options)
@@ -142,16 +159,68 @@ async function tryGenerateText(
   model: ReturnType<typeof createModel>,
   messages: ModelMessage[],
   system: string | undefined,
+  inactivityTimeoutMs: number,
+  onActivity?: () => void,
 ): Promise<string | null> {
+  const idleTimeout = createInactivityTimeout(inactivityTimeoutMs)
+
   try {
-    const result = await generateText({
+    const result = streamText({
       model,
       messages,
-      abortSignal: AbortSignal.timeout(30_000),
+      abortSignal: idleTimeout.signal,
       ...(system ? { system } : {}),
     })
-    return result.text
+
+    let text = ''
+    for await (const delta of result.textStream) {
+      idleTimeout.reset()
+      // 只向调用方报告内部活动，不把 rerank 文本透传到聊天前端。
+      onActivity?.()
+      text += delta
+    }
+    return text
   } catch {
     return null
+  } finally {
+    idleTimeout.dispose()
+  }
+}
+
+/** JSON 文本调用默认允许模型连续 45 秒没有新 token 才中止。 */
+export const LLM_JSON_INACTIVITY_TIMEOUT_MS = 45_000
+
+export interface LlmJsonOptions {
+  inactivityTimeoutMs?: number
+  /** 内部模型输出或阶段完成时的活动通知，不携带文本内容。 */
+  onActivity?: () => void
+}
+
+function resolveInactivityTimeout(value: number | undefined): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  return LLM_JSON_INACTIVITY_TIMEOUT_MS
+}
+
+interface InactivityTimeout {
+  signal: AbortSignal
+  reset: () => void
+  dispose: () => void
+}
+
+/** 创建可重置的空闲超时信号，模型每输出一个文本片段就重新开始倒计时。 */
+function createInactivityTimeout(timeoutMs: number): InactivityTimeout {
+  const controller = new AbortController()
+  let timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  return {
+    signal: controller.signal,
+    reset: () => {
+      if (controller.signal.aborted) return
+      clearTimeout(timer)
+      timer = setTimeout(() => controller.abort(), timeoutMs)
+    },
+    dispose: () => {
+      clearTimeout(timer)
+    },
   }
 }

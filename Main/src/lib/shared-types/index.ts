@@ -63,6 +63,30 @@ export interface BilibiliVideoCard {
   description: string;
 }
 
+/**
+ * 视频搜索批次（S-3）。
+ *
+ * 背景：原实现中 ChatState.videos 是一个扁平数组，SET_VIDEOS 直接替换全局数组，
+ * 导致新搜索会顶掉旧搜索的视频卡片；而 understanding/expansion/rerank 三类 insight
+ * 采用追加策略保留在消息流中，产生"旧 insight 还在、对应视频却没了"的语义错配。
+ *
+ * 批次模型让每组搜索结果携带自己的身份和渲染锚点，从而挂在触发它的那条输出下面。
+ */
+export interface VideoBatch {
+  /** 批次唯一标识。由 SW 在 bilibili_search 推送时生成，video_rerank 重排推送复用同值 */
+  batchId: string;
+  /** 该批次的视频数组 */
+  videos: BilibiliVideoCard[];
+  /** 渲染锚点时间戳：取批次创建时最后一条 assistant 消息的 timestamp，决定批次插入消息流的位置 */
+  anchorTimestamp: number;
+  /** 批次首次到达时间。与 insight 的 receivedAt 字段语义对齐 */
+  receivedAt: number;
+  /** 是否已经过 video_rerank 重排。供 S-4 判断客户端排序是否应让位于后端重排顺序 */
+  reranked: boolean;
+  /** 当前批次是否正在等待 rerank；历史批次和无需 rerank 的结果为 false/缺省 */
+  rerankPending?: boolean;
+}
+
 export interface SlangUnderstandResult {
   original: string;
   normalized: string;
@@ -124,6 +148,11 @@ export interface ConversationData {
   id: string;
   messages: ChatMessage[];
   videos: BilibiliVideoCard[];
+  /**
+   * 视频批次（S-3）。可选字段，向后兼容策略：
+   * 旧版本保存的对话只有扁平 videos，加载时由 migrateVideoBatches 迁移为单批次。
+   */
+  videoBatches?: VideoBatch[];
   understandings: Array<SlangUnderstandResult & { receivedAt: number }>;
   expansions: Array<QueryExpandResult & { receivedAt: number }>;
   reranks: Array<RerankResult & { receivedAt: number }>;

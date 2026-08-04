@@ -15,6 +15,7 @@ import type {
   ChatMessage,
   AgentStep,
   BilibiliVideoCard,
+  VideoBatch,
   SlangUnderstandResult,
   QueryExpandResult,
   RerankResult,
@@ -85,6 +86,11 @@ export interface PersistedConversation {
   conversationId: string
   messages: ChatMessage[]
   videos: BilibiliVideoCard[]
+  /**
+   * 视频批次（S-3）。可选字段，采用向后兼容策略：
+   * 旧缓存只有扁平 videos 时，由 migrateVideoBatches 迁移为单批次。
+   */
+  videoBatches?: VideoBatch[]
   understandings: TimedUnderstanding[]
   expansions: TimedExpansion[]
   reranks: TimedRerank[]
@@ -98,7 +104,15 @@ export interface ChatState {
   streamingContent: string
   streamingReasoning: string
   error: ErrorPayload | null
+  /**
+   * 当前活跃视频（= 最新批次的 videos）。
+   * S-3 之后 videoBatches 才是真实数据源，本字段作为派生镜像保留，
+   * 供只关心「当前这组视频」的调用方（如 save-orchestrator 的活动判定）继续使用，
+   * 由 reducer 在每次批次变更时同步，不单独写入。
+   */
   videos: BilibiliVideoCard[]
+  /** 视频批次列表（S-3）：按到达顺序累积，新搜索追加而非替换，旧批次留在旧输出下 */
+  videoBatches: VideoBatch[]
   activity: AgentActivity | null
   understandings: TimedUnderstanding[]
   expansions: TimedExpansion[]
@@ -112,6 +126,10 @@ export type ChatAction =
   | { type: 'SET_LOADING'; payload: boolean }
   | { type: 'SET_ERROR'; payload: ErrorPayload | null }
   | { type: 'SET_VIDEOS'; payload: BilibiliVideoCard[] }
+  /** 按 batchId upsert 视频批次（S-3）：批次已存在则更新，不存在则追加 */
+  | { type: 'UPSERT_VIDEO_BATCH'; payload: VideoBatch }
+  /** 清空全部视频批次（S-3） */
+  | { type: 'CLEAR_VIDEO_BATCHES' }
   | { type: 'APPEND_STREAMING'; payload: string }
   | { type: 'APPEND_REASONING'; payload: string }
   | { type: 'SET_ACTIVITY'; payload: AgentActivity | null }
@@ -143,6 +161,7 @@ export function createInitialChatState(): ChatState {
   return {
     messages: [],
     videos: [],
+    videoBatches: [],
     conversationId: generateConversationId(),
     streamingContent: '',
     streamingReasoning: '',
@@ -155,6 +174,76 @@ export function createInitialChatState(): ChatState {
     reranks: [],
     clarification: null,
   }
+}
+
+/**
+ * 取当前活跃视频（S-3）：最新批次的 videos。
+ * 保持与 S-3 之前「全局只展示一组视频」相同的语义，供派生镜像和外部调用方使用。
+ */
+export function selectCurrentVideos(state: Pick<ChatState, 'videoBatches'>): BilibiliVideoCard[] {
+  return state.videoBatches.at(-1)?.videos ?? []
+}
+
+/**
+ * 旧数据迁移（S-3）：把持久化中的扁平 videos 数组迁移为单个批次。
+ *
+ * 三条持久化入口（loadLocalCache / loadConversation / HYDRATE-REHYDRATE）共用本函数，
+ * 避免各自实现迁移逻辑造成不一致（参考 R-1 的 sanitizeHistoryIndex 模式）。
+ * 同时对批次字段做运行时校验：batchId 非法时降级为临时值，videos 非数组时丢弃该批次，
+ * 防止脏数据进入状态层引发 render crash。
+ *
+ * @param batches 新版持久化的 videoBatches 字段（可能不存在）
+ * @param legacyVideos 旧版持久化的扁平 videos 字段
+ * @param conversationId 用于生成 legacy 批次标识，保证同一会话迁移结果稳定
+ */
+export function migrateVideoBatches(
+  batches: unknown,
+  legacyVideos: unknown,
+  conversationId: string,
+): VideoBatch[] {
+  // 新版数据：逐条校验批次字段
+  if (Array.isArray(batches)) {
+    const result: VideoBatch[] = []
+    for (const raw of batches) {
+      if (!raw || typeof raw !== 'object') continue
+      const candidate = raw as Record<string, unknown>
+      // videos 非数组的批次无法渲染，整条丢弃
+      if (!Array.isArray(candidate.videos)) continue
+      result.push({
+        batchId:
+          typeof candidate.batchId === 'string' && candidate.batchId.length > 0
+            ? candidate.batchId
+            : `legacy_${conversationId}_${result.length}`,
+        videos: candidate.videos as BilibiliVideoCard[],
+        anchorTimestamp:
+          typeof candidate.anchorTimestamp === 'number' && Number.isFinite(candidate.anchorTimestamp)
+            ? candidate.anchorTimestamp
+            : 0,
+        receivedAt:
+          typeof candidate.receivedAt === 'number' && Number.isFinite(candidate.receivedAt)
+            ? candidate.receivedAt
+            : 0,
+        reranked: candidate.reranked === true,
+        rerankPending: candidate.rerankPending === true,
+      })
+    }
+    return result
+  }
+
+  // 旧版数据：非空扁平 videos 迁移为单批次，anchorTimestamp=0 使其排在消息流最前
+  if (Array.isArray(legacyVideos) && legacyVideos.length > 0) {
+    return [
+      {
+        batchId: `legacy_${conversationId}`,
+        videos: legacyVideos as BilibiliVideoCard[],
+        anchorTimestamp: 0,
+        receivedAt: 0,
+        reranked: false,
+      },
+    ]
+  }
+
+  return []
 }
 
 export function createInitialConsumerState(): ConsumerState {
@@ -177,6 +266,21 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
 
     case 'SET_VIDEOS':
       return { ...state, videos: action.payload }
+
+    case 'UPSERT_VIDEO_BATCH': {
+      // 按 batchId 定位：已存在则原地更新（video_rerank 的重排推送走这条路径），
+      // 不存在则追加（新搜索产生新批次）。旧批次始终保留，不再被新搜索顶掉。
+      const index = state.videoBatches.findIndex((b) => b.batchId === action.payload.batchId)
+      const videoBatches =
+        index >= 0
+          ? state.videoBatches.map((b, i) => (i === index ? action.payload : b))
+          : [...state.videoBatches, action.payload]
+      // videos 是派生镜像，随批次变更同步为最新批次的视频
+      return { ...state, videoBatches, videos: selectCurrentVideos({ videoBatches }) }
+    }
+
+    case 'CLEAR_VIDEO_BATCHES':
+      return { ...state, videoBatches: [], videos: [] }
 
     case 'APPEND_STREAMING':
       return { ...state, streamingContent: state.streamingContent + action.payload }
@@ -276,10 +380,17 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       ) {
         return { ...state, hydrated: true }
       }
+      // 恢复视频批次（S-3）：旧缓存只有扁平 videos 时迁移为单批次
+      const videoBatches = migrateVideoBatches(
+        action.payload.videoBatches,
+        action.payload.videos,
+        action.payload.conversationId,
+      )
       return {
         ...state,
         messages: action.payload.messages,
-        videos: action.payload.videos,
+        videos: selectCurrentVideos({ videoBatches }),
+        videoBatches,
         conversationId: action.payload.conversationId,
         understandings: action.payload.understandings,
         expansions: action.payload.expansions,
@@ -288,11 +399,18 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       }
     }
 
-    case 'REHYDRATE':
+    case 'REHYDRATE': {
+      // 加载历史会话（S-3）：同样经过迁移，保证旧会话的视频挂回批次结构
+      const videoBatches = migrateVideoBatches(
+        action.payload.videoBatches,
+        action.payload.videos,
+        action.payload.conversationId,
+      )
       return {
         ...state,
         messages: action.payload.messages,
-        videos: action.payload.videos,
+        videos: selectCurrentVideos({ videoBatches }),
+        videoBatches,
         conversationId: action.payload.conversationId,
         understandings: action.payload.understandings,
         expansions: action.payload.expansions,
@@ -305,6 +423,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         activity: null,
         clarification: null,
       }
+    }
 
     case 'ADD_UNDERSTANDING':
       return {
@@ -456,11 +575,35 @@ export function consumeSWMessage(
       })
       break
 
-    case 'videos':
+    case 'videos': {
       // 修复 #2：双保险——即使 Port 层校验被绕过（如测试直接调用），也保证 videos 是数组
       if (!Array.isArray(msg.videos)) break
-      dispatch({ type: 'SET_VIDEOS', payload: msg.videos })
+      // 批次归属（S-3）：batchId 缺失或非法时降级生成临时标识，
+      // 保证旧版本 SW 推送的无批次消息仍能显示（向后兼容方案B）
+      const batchId =
+        typeof msg.batchId === 'string' && msg.batchId.length > 0
+          ? msg.batchId
+          : `legacy_${Date.now()}`
+      const existing = stateRef.current.videoBatches.find((b) => b.batchId === batchId)
+      // 锚点推导：批次首次到达时取当前最后一条 assistant 消息的时间戳；
+      // 同批次更新（rerank）时保持原锚点，避免重排把视频块挪到消息流末尾
+      const anchorTimestamp =
+        existing?.anchorTimestamp
+        ?? stateRef.current.messages.filter((m) => m.role === 'assistant').at(-1)?.timestamp
+        ?? Date.now()
+      dispatch({
+        type: 'UPSERT_VIDEO_BATCH',
+        payload: {
+          batchId,
+          videos: msg.videos,
+          anchorTimestamp,
+          receivedAt: existing?.receivedAt ?? Date.now(),
+          reranked: msg.reranked === true,
+          rerankPending: msg.rerankPending === true,
+        },
+      })
       break
+    }
 
     case 'insight': {
       // 修复 #4：按 kind 做运行时字段守卫，残缺数据整条丢弃，不进入 state
@@ -702,6 +845,8 @@ function useChatController(): UseChatResult {
           conversationId: current.conversationId,
           messages,
           videos: current.videos,
+          // 保存批次（S-3）：历史对话加载后旧视频仍挂在旧输出下
+          videoBatches: current.videoBatches,
           understandings: current.understandings,
           expansions: current.expansions,
           reranks: current.reranks,
@@ -792,6 +937,9 @@ function useChatController(): UseChatResult {
               conversationId: data.id,
               messages: data.messages,
               videos: data.videos,
+              // 透传批次（S-3）：REHYDRATE reducer 内会调用 migrateVideoBatches，
+              // 旧对话没有该字段时按扁平 videos 迁移为单批次
+              videoBatches: data.videoBatches,
               understandings: data.understandings,
               expansions: data.expansions,
               reranks: data.reranks,

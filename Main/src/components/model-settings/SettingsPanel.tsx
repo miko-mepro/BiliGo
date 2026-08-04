@@ -6,10 +6,6 @@ import {
 	useState,
 } from "react";
 import {
-	isBuiltInProviderOrigin,
-	resolveOriginPattern,
-} from "../../config/origin-pattern.js";
-import {
 	type BiliAgentSettings,
 	saveBiliAgentSettings,
 	type ThemeMode,
@@ -163,14 +159,6 @@ export function SettingsPanel({
 	 * 3. 成功 -> onSaved 回调 + saved 态（2s 后回 idle）
 	 * 4. 失败 -> error 态 + 显示错误信息
 	 *
-	 * MV3 origin 授权（P5 新增）：
-	 * - 必须在 onClick 同步栈内调 chrome.permissions.request（用户手势上下文）。
-	 *   因此本函数在 await saveBiliAgentSettings 之前先同步遍历自定义 provider
-	 *   申请权限。Chrome 允许在 onClick 同步链中 await permissions.request。
-	 * - 仅对非内置域名申请（内置域名已在 host_permissions 中授权）。
-	 * - 用户拒绝 / API 异常 -> error 态 + 错误提示 "需要授权访问该域名"，
-	 *   且不调 saveBiliAgentSettings（不留半保存），不调 onSaved。
-	 *
 	 * @param e 表单提交事件
 	 */
 	const handleSave = useCallback(
@@ -178,52 +166,6 @@ export function SettingsPanel({
 			e.preventDefault();
 			setSaveStatus("saving");
 			setSaveError("");
-
-			// ---- MV3 origin 授权：必须在用户手势同步栈内完成 ----
-			// 先同步收集所有需要申请的 origin pattern，再一次性批量请求权限。
-			// 这是因为 chrome.permissions.request 的 origins 参数本身支持数组，
-			// 批量请求可避免 for...of 中第一个 await 后脱离用户手势同步栈的问题。
-			const patterns: string[] = [];
-			for (const provider of providers) {
-				// 仅自定义 provider 需要申请（内置 provider 已在 host_permissions 中）
-				if (!provider.isCustom) {
-					continue;
-				}
-				// baseUrl 为空的自定义 provider 跳过，让后续 saveBiliAgentSettings 自然失败
-				const baseUrl = provider.baseUrl;
-				if (baseUrl.trim() === "") {
-					continue;
-				}
-				// 内置域名（如 api.openai.com）已在 host_permissions 中，跳过
-				if (isBuiltInProviderOrigin(baseUrl)) {
-					continue;
-				}
-				// 解析最小 origin 通配 pattern；解析失败（空串）跳过
-				const pattern = resolveOriginPattern(baseUrl);
-				if (pattern === "") {
-					continue;
-				}
-				patterns.push(pattern);
-			}
-			// 在用户手势同步栈内一次性申请所有权限
-			if (patterns.length > 0) {
-				try {
-					const granted = await chrome.permissions.request({
-						origins: patterns,
-					});
-					if (!granted) {
-						// 用户拒绝授权：渲染错误提示，不保存，不触发 onSaved
-						setSaveError("需要授权访问该域名");
-						setSaveStatus("error");
-						return;
-					}
-				} catch {
-					// Chrome API 抛异常：同样渲染错误提示，不保存
-					setSaveError("需要授权访问该域名");
-					setSaveStatus("error");
-					return;
-				}
-			}
 
 			try {
 				const next: BiliAgentSettings = {
@@ -442,7 +384,12 @@ export function SettingsPanel({
 								/>
 								{/* TestConnectionButton 接收 SettingsPanel props 的 port（SA-12 经单 Port） */}
 								<div style={{ marginTop: 8 }}>
-									<TestConnectionButton provider={activeProvider} port={port} />
+									{/* Provider 配置变化时重挂载，避免旧测试状态残留到新配置。 */}
+									<TestConnectionButton
+										key={JSON.stringify(activeProvider)}
+										provider={activeProvider}
+										port={port}
+									/>
 								</div>
 							</div>
 						)}

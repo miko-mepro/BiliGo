@@ -1,6 +1,6 @@
 import type { BilibiliVideoCard } from '../lib/shared-types/index.js'
 
-export type SortField = 'play' | 'pubdate' | 'duration' | 'favorites';
+export type SortField = 'play' | 'pubdate' | 'duration' | 'favorites' | 'rerank';
 export type DateFilter = 'all' | 'week' | 'month' | 'year';
 export type DurationFilter = 'all' | 'short' | 'medium' | 'long';
 
@@ -31,8 +31,12 @@ export function parseDurationToSeconds(duration: string): number {
 
 /**
  * Sorts a copy of the video array by the specified field in descending order.
+ * `rerank` explicitly keeps the backend-provided order.
  */
 export function sortVideos(videos: BilibiliVideoCard[], sortField: SortField): BilibiliVideoCard[] {
+  // 智能排序保留后端重排顺序，只复制数组以避免修改状态源。
+  if (sortField === 'rerank') return [...videos];
+
   const sorted = [...videos];
 
   sorted.sort((a, b) => {

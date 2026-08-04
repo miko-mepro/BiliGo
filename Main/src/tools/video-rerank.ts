@@ -8,13 +8,19 @@ import type {
   WorkingMemory,
 } from '../lib/shared-types/index.js'
 import { fetchVideoTags, type VideoTag } from '../lib/bilibili-client/tags.js'
-import { callLlmForJson as defaultCallLlmForJson } from './llm-json.js'
+import {
+  callLlmForJson as defaultCallLlmForJson,
+  type LlmJsonOptions,
+} from './llm-json.js'
 
 /**
  * 重排候选硬上限（3.3 §6.3）。
  * 超过此值的输入会被截断到前 30 条，`trimmed` 记录截断数。
  */
 const MAX_CANDIDATES = 30
+
+/** rerank 文本流连续无新输出的超时阈值，与 llm-json 的默认策略保持一致。 */
+export const RERANK_LLM_INACTIVITY_TIMEOUT_MS = 45_000
 
 /** memoryStore 接口：traceId 已在工厂闭包中绑定（3.7 §6.1 仅 { get, update }）。 */
 export interface RerankMemoryStore {
@@ -25,12 +31,15 @@ export interface RerankMemoryStore {
 /** LLM 调用器类型，便于在测试中注入模型/API 替身。 */
 export type LlmJsonCaller = (
   messages: ChatMessage[],
+  options?: LlmJsonOptions,
 ) => Promise<{ items: RerankItem[] } | null>
 
 /** video_rerank 工厂依赖：memoryStore 必填，callLlmForJson 可选（默认走 llm-json.js）。 */
 export interface VideoRerankDeps {
   memoryStore: RerankMemoryStore
   callLlmForJson?: LlmJsonCaller
+  /** 通知外层聊天流 rerank 仍在工作，但不向前端发送内部文本。 */
+  onActivity?: () => void
 }
 
 /** video_rerank 工具输入（AI SDK tool() inputSchema，3.1 §6 / 3.3 §6）。 */
@@ -43,7 +52,8 @@ export const videoRerankInputSchema = z.object({
 
 /** video_rerank 工具工厂：返回 AI SDK tool() 对象。 */
 export function createVideoRerankTool(deps: VideoRerankDeps) {
-  const callLlm = deps.callLlmForJson ?? (defaultCallLlmForJson as unknown as LlmJsonCaller)
+  const callLlm: LlmJsonCaller = deps.callLlmForJson
+    ?? ((messages, options) => defaultCallLlmForJson(messages, undefined, options))
 
   return tool({
     description:
@@ -53,6 +63,7 @@ export function createVideoRerankTool(deps: VideoRerankDeps) {
       return executeVideoRerank(videos as unknown as BilibiliVideoCard[], intent, {
         memoryStore: deps.memoryStore,
         callLlmForJson: callLlm,
+        onActivity: deps.onActivity,
       })
     },
   })
@@ -80,7 +91,8 @@ export async function executeVideoRerank(
   intent: string,
   deps: VideoRerankDeps,
 ): Promise<RerankResult> {
-  const callLlm = deps.callLlmForJson ?? (defaultCallLlmForJson as unknown as LlmJsonCaller)
+  const callLlm: LlmJsonCaller = deps.callLlmForJson
+    ?? ((messages, options) => defaultCallLlmForJson(messages, undefined, options))
   const truncated = videos.slice(0, MAX_CANDIDATES)
   const trimmed = Math.max(0, videos.length - MAX_CANDIDATES)
 
@@ -90,23 +102,34 @@ export async function executeVideoRerank(
   }
 
   const BATCH_SIZE = 5
+  const BATCH_CONCURRENCY = 3
   const tagsByBvid = new Map<string, string[]>()
+  const batches: BilibiliVideoCard[][] = []
   for (let i = 0; i < truncated.length; i += BATCH_SIZE) {
-    const batch = truncated.slice(i, i + BATCH_SIZE)
-    const results = await Promise.allSettled(
-      batch.map((card) => fetchVideoTags(card.bvid)),
-    )
-    batch.forEach((card, j) => {
-      const result = results[j]
-      if (result?.status === 'fulfilled') {
-        const names = result.value
-          .map((tag: VideoTag) => tag.tag_name)
-          .filter((name: string): name is string => typeof name === 'string' && name.length > 0)
-        tagsByBvid.set(card.bvid, names)
-      } else {
-        tagsByBvid.set(card.bvid, [])
-      }
-    })
+    batches.push(truncated.slice(i, i + BATCH_SIZE))
+  }
+
+  // 每轮最多启动 3 批、15 个标签请求，避免一次性打满 B 站接口。
+  for (let i = 0; i < batches.length; i += BATCH_CONCURRENCY) {
+    const currentBatches = batches.slice(i, i + BATCH_CONCURRENCY)
+    await Promise.all(currentBatches.map(async (batch) => {
+      const results = await Promise.allSettled(
+        batch.map((card) => fetchVideoTags(card.bvid)),
+      )
+      batch.forEach((card, j) => {
+        const result = results[j]
+        if (result?.status === 'fulfilled') {
+          const names = result.value
+            .map((tag: VideoTag) => tag.tag_name)
+            .filter((name: string): name is string => typeof name === 'string' && name.length > 0)
+          tagsByBvid.set(card.bvid, names)
+        } else {
+          tagsByBvid.set(card.bvid, [])
+        }
+      })
+      // 一个标签批次完成也算内部活动，防止外层聊天流误判为无响应。
+      deps.onActivity?.()
+    }))
   }
 
   try {
@@ -118,7 +141,11 @@ export async function executeVideoRerank(
       timestamp: now,
     }
 
-    const parsed = await callLlm([message])
+    const llmOptions: LlmJsonOptions = {
+      inactivityTimeoutMs: RERANK_LLM_INACTIVITY_TIMEOUT_MS,
+      ...(deps.onActivity ? { onActivity: deps.onActivity } : {}),
+    }
+    const parsed = await callLlm([message], llmOptions)
 
     if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
       throw new Error('LLM returned empty rerank items')

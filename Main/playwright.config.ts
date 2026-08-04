@@ -27,12 +27,23 @@ export default defineConfig({
 			name: "chromium-extension",
 			use: {
 				...devices["Desktop Chrome"],
+				// 扩展启动、SW 响应和 React 首渲染需要独立的可控超时。
+				actionTimeout: 30_000,
+				navigationTimeout: 60_000,
+				channel: "chromium",
 				launchOptions: {
 					args: [
 						// 排除其他扩展，仅加载本项目 dist 产物
 						`--disable-extensions-except=${extensionPath}`,
 						// 加载本项目扩展
 						`--load-extension=${extensionPath}`,
+						"--enable-automation",
+						"--disable-background-networking",
+						"--disable-sync",
+						"--no-default-browser-check",
+						"--disable-features=TranslateUI",
+						"--disable-background-timer-throttling",
+						"--disable-renderer-backgrounding",
 					],
 				},
 			},

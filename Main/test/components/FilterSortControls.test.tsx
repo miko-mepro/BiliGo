@@ -82,6 +82,15 @@ describe('FilterSortControls', () => {
 
       expect(defaultProps.onSortChange).toHaveBeenCalledWith('duration');
     });
+
+    it('calls onSortChange with rerank when smart sorting is selected', () => {
+      render(<FilterSortControls {...defaultProps} />);
+
+      const sortSelect = screen.getByLabelText(/排序/i);
+      fireEvent.change(sortSelect, { target: { value: 'rerank' } });
+
+      expect(defaultProps.onSortChange).toHaveBeenCalledWith('rerank');
+    });
   });
 
   describe('Date filter interactions', () => {
