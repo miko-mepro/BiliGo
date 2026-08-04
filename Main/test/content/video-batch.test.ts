@@ -251,6 +251,16 @@ describe('migrateVideoBatches 旧数据迁移（S-3）', () => {
     expect(result[0]).toMatchObject({ anchorTimestamp: 0, receivedAt: 0, reranked: false })
   })
 
+  it('迁移时保留等待 rerank 的批次状态', () => {
+    const result = migrateVideoBatches(
+      [{ batchId: 'b1', videos: [video('BV1')], rerankPending: true }],
+      [],
+      'conv_1',
+    )
+
+    expect(result[0].rerankPending).toBe(true)
+  })
+
   it('非数组的 batches 输入回落到扁平 videos 迁移', () => {
     const result = migrateVideoBatches('not-an-array', [video('BV1')], 'conv_1')
     expect(result).toHaveLength(1)

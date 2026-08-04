@@ -21,6 +21,9 @@ const SCROLL_BOTTOM_THRESHOLD = 80;
 /** 限制流式 chunk 触发 scrollIntoView 的频率，避免 smooth 动画叠加。 */
 const SCROLL_THROTTLE_MS = 100;
 
+/** rerank 长时间无回推时的前端兜底阈值，与后台 LLM 空闲超时保持一致。 */
+export const RERANK_FALLBACK_TIMEOUT_MS = 45_000;
+
 /** Render items are merged from messages + insights, sorted by arrival time. */
 type RenderItem =
   | { type: 'message'; message: ChatMessage; index: number; isStreaming: boolean; streamingContent: string }
@@ -52,7 +55,25 @@ function VideoBatchBlock({ batch }: { batch: VideoBatch }): React.ReactElement |
   const [sortField, setSortField] = useState<SortField>('play');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
+  const [rerankTimedOut, setRerankTimedOut] = useState(false);
   const userSelectedSortRef = useRef(false);
+
+  const rerankWaiting = batch.rerankPending === true && !batch.reranked;
+
+  // 当前批次在 rerank 完成前不展示网格；Port 失联或后台无回推时，
+  // 由前端在 45 秒后以搜索原序兜底，避免用户永久等待。
+  useEffect(() => {
+    if (!rerankWaiting) return;
+
+    const timeoutId = setTimeout(() => {
+      setRerankTimedOut(true);
+      if (!userSelectedSortRef.current) {
+        setSortField('rerank');
+      }
+    }, RERANK_FALLBACK_TIMEOUT_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [batch.batchId, batch.rerankPending, batch.reranked, rerankWaiting]);
 
   // 后端重排到达时，只有用户尚未手动选择排序才切换到智能排序。
   useEffect(() => {
@@ -70,7 +91,7 @@ function VideoBatchBlock({ batch }: { batch: VideoBatch }): React.ReactElement |
     return applySortAndFilter(batch.videos, sortField, dateFilter, durationFilter);
   }, [batch.videos, sortField, dateFilter, durationFilter]);
 
-  if (batch.videos.length === 0) return null;
+  if (batch.videos.length === 0 || (rerankWaiting && !rerankTimedOut)) return null;
 
   return (
     <>

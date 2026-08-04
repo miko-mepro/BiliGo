@@ -223,6 +223,7 @@ export function migrateVideoBatches(
             ? candidate.receivedAt
             : 0,
         reranked: candidate.reranked === true,
+        rerankPending: candidate.rerankPending === true,
       })
     }
     return result

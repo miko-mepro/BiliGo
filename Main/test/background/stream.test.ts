@@ -709,6 +709,34 @@ describe('tool auxiliary messages', () => {
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
+  it('marks a search batch as rerank-pending when it contains more than three videos', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const videos = [
+      { bvid: 'BV1aa', title: 'video1' },
+      { bvid: 'BV2bb', title: 'video2' },
+      { bvid: 'BV3cc', title: 'video3' },
+      { bvid: 'BV4dd', title: 'video4' },
+    ]
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s2', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s2', 'bilibili_search', videos),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'videos',
+      videos,
+      batchId: 'search_call_s2',
+      reranked: false,
+      rerankPending: true,
+    })
+  })
+
   it('pushes tool_start + tool_result + insight(rerank) + videos(reordered) for video_rerank (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()

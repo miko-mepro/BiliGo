@@ -52,7 +52,13 @@ describe('isSWMessage', () => {
   describe('videos 批次字段校验（S-3）', () => {
     it('接受携带 batchId 与 reranked 的完整批次消息', () => {
       expect(
-        isSWMessage({ type: 'videos', videos: [], batchId: 'search_c1', reranked: true }),
+        isSWMessage({
+          type: 'videos',
+          videos: [],
+          batchId: 'search_c1',
+          reranked: true,
+          rerankPending: false,
+        }),
       ).toBe(true)
     })
 
@@ -77,6 +83,15 @@ describe('isSWMessage', () => {
 
     it('reranked 缺省时接受', () => {
       expect(isSWMessage({ type: 'videos', videos: [], batchId: 'b1' })).toBe(true)
+    })
+
+    it('rerankPending 必须是布尔值', () => {
+      expect(
+        isSWMessage({ type: 'videos', videos: [], batchId: 'b1', rerankPending: 'yes' }),
+      ).toBe(false)
+      expect(
+        isSWMessage({ type: 'videos', videos: [], batchId: 'b1', rerankPending: true }),
+      ).toBe(true)
     })
   })
 

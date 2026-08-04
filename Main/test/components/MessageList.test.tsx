@@ -1,7 +1,7 @@
 import React from 'react'
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { MessageList } from '../../src/components/MessageList.js'
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { MessageList, RERANK_FALLBACK_TIMEOUT_MS } from '../../src/components/MessageList.js'
 
 // jsdom does not implement scrollIntoView
 Element.prototype.scrollIntoView = vi.fn();
@@ -104,8 +104,16 @@ function makeBatch(
   videos: BilibiliVideoCard[],
   anchorTimestamp: number,
   reranked = false,
+  rerankPending = false,
 ): VideoBatch {
-  return { batchId, videos, anchorTimestamp, receivedAt: anchorTimestamp, reranked };
+  return {
+    batchId,
+    videos,
+    anchorTimestamp,
+    receivedAt: anchorTimestamp,
+    reranked,
+    rerankPending,
+  };
 }
 
 describe('MessageList', () => {
@@ -353,6 +361,40 @@ describe('MessageList', () => {
       expect(screen.getAllByTestId('video-grid')).toHaveLength(1);
       const text = container.textContent ?? '';
       expect(text.indexOf('第二')).toBeLessThan(text.indexOf('第一'));
+    });
+
+    it('rerank 完成前不渲染网格，45 秒无回推后显示原序兜底', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '正在重排', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV1', '原序第一'),
+              makeVideo('BV2', '原序第二'),
+              makeVideo('BV3', '原序第三'),
+              makeVideo('BV4', '原序第四'),
+            ],
+            1000,
+            false,
+            true,
+          ),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+
+      expect(screen.queryByTestId('video-grid')).not.toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(RERANK_FALLBACK_TIMEOUT_MS);
+      });
+
+      expect(screen.getByTestId('video-grid')).toBeInTheDocument();
+      const text = container.textContent ?? '';
+      expect(text.indexOf('原序第一')).toBeLessThan(text.indexOf('原序第二'));
     });
 
     it('空批次不渲染视频网格与筛选控件', () => {
