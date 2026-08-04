@@ -249,7 +249,7 @@ export function inferErrorCode(error: unknown): string {
   if (/\b(?:eproto|tls|ssl|certificate|handshake)\b/.test(lower)) {
     return 'TLS_ERROR'
   }
-  if (/(?:provider|base[\s_-]*url|model).*(?:invalid|missing|not configured|unsupported)/.test(lower)) {
+  if (/(?:provider|base[\s_-]*url|model).*(?:invalid|missing|not configured|unsupported)|(?:invalid|missing|not configured|unsupported).*(?:provider|base[\s_-]*url|model)/.test(lower)) {
     return 'PROVIDER_CONFIG_ERROR'
   }
   if (/\b(?:fetch failed|network|socket|connect)\b/.test(lower)) {
