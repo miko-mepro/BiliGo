@@ -79,6 +79,8 @@ import {
   handleStop,
   handleTestConnection,
   postToPort,
+  CHAT_STREAM_TIMEOUT_MS,
+  setupPortListener,
   type PortSession,
 } from '../../src/background/stream.js'
 import type { CSMessage, SWMessage } from '../../src/background/port-protocol.js'
@@ -99,7 +101,7 @@ function createPort(name = 'bili-agent-chat') {
 }
 
 function createSession(overrides: Partial<PortSession> = {}): PortSession {
-  return { disconnected: false, abortController: null, ...overrides }
+  return { disconnected: false, abortController: null, abortReason: null, ...overrides }
 }
 
 function streamOf(...parts: any[]): AsyncIterable<any> {
@@ -143,6 +145,25 @@ function deferredStream(options: { onAbort?: () => boolean } = {}) {
     },
     resolve() {
       resolveContinue()
+    },
+  }
+}
+
+function streamUntilAbort(signal: AbortSignal): AsyncIterable<any> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield textDelta('开始')
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
     },
   }
 }
@@ -356,10 +377,78 @@ describe('termination', () => {
     })
     expect(session.abortController).not.toBeNull()
     handleStop(session)
+    expect(session.abortReason).toBe('user')
     expect(session.abortController!.signal.aborted).toBe(true)
     deferred.resolve()
     await promise
     expect(posted.some((m) => m.type === 'error')).toBe(false)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('reports a readable timeout error when the chat stream stalls', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '开始' })
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+      await promise
+
+      expect(session.abortReason).toBe('timeout')
+      expect(posted).toContainEqual({
+        type: 'error',
+        code: 'TIMEOUT',
+        message: '聊天流请求超时，请稍后重试',
+      })
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not report a timeout when the stream completes normally', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      setupStreamResult(streamOf(textDelta('完成')))
+
+      await handleChatMessage(port, session, makeChatMsg())
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cleans up when streamText throws before returning a stream', async () => {
+    setupValidProvider()
+    aiMocks.streamText.mockImplementation(() => {
+      throw new Error('stream setup failed')
+    })
+    const { port, posted } = createPort()
+    const session = createSession()
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'UNKNOWN_ERROR',
+      message: '请求失败，请稍后重试',
+    })
+    expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 })
@@ -417,6 +506,50 @@ describe('disconnect', () => {
     expect(chunks.length).toBe(1)
     expect(posted.some((m) => m.type === 'error')).toBe(false)
     expect(posted.some((m) => m.type === 'done')).toBe(false)
+  })
+
+  it('marks a real Port disconnect as silent cancellation', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    let onMessage: (message: unknown) => void = () => undefined
+    let onDisconnect: () => void = () => undefined
+    const listenerPort = {
+      ...port,
+      onMessage: {
+        addListener: vi.fn((handler: (message: unknown) => void) => {
+          onMessage = handler
+        }),
+        removeListener: vi.fn(),
+      },
+      onDisconnect: {
+        addListener: vi.fn((handler: () => void) => {
+          onDisconnect = handler
+        }),
+        removeListener: vi.fn(),
+      },
+    } as unknown as chrome.runtime.Port
+    const onConnectAddListener = vi.mocked(chrome.runtime.onConnect.addListener)
+    onConnectAddListener.mockClear()
+
+    setupPortListener()
+    const connectHandler = onConnectAddListener.mock.calls[0][0]
+    connectHandler(listenerPort)
+
+    const deferred = deferredStream({ onAbort: () => true })
+    setupStreamResult(deferred.stream)
+    onMessage(makeChatMsg())
+    await vi.waitFor(() => {
+      expect(posted).toContainEqual({ type: 'chunk', delta: 'a' })
+    })
+
+    onDisconnect()
+    deferred.resolve()
+    await vi.waitFor(() => {
+      expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
+    })
+
+    expect(posted.some((message) => message.type === 'error')).toBe(false)
+    expect(posted.some((message) => message.type === 'done')).toBe(false)
   })
 })
 
@@ -622,9 +755,9 @@ describe('tool auxiliary messages', () => {
     const toolResultIdx = posted.findIndex(
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_r1',
     )
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
     // tool_result 在 insight(rerank) 和 videos 之前
     expect(toolResultIdx).toBeLessThan(insightIdx)
-    expect(insightIdx).toBeGreaterThanOrEqual(0)
     expect(videosIdx).toBeGreaterThan(insightIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
@@ -758,17 +891,26 @@ describe('tool auxiliary messages', () => {
       streamOf(
         toolCall('call_e1', 'query_expand', { query: '鬼畜' }),
         toolResult('call_e1', 'query_expand', expansion),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
     expect(posted).toContainEqual({
       type: 'tool_start',
       toolCallId: 'call_e1',
       toolName: 'query_expand',
       args: { query: '鬼畜' },
     })
-      ),
-    )
-    await handleChatMessage(port, session, makeChatMsg())
     expect(posted).toContainEqual({
       type: 'insight',
+      kind: 'expansion',
+      data: expansion,
+    })
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_e1',
+      toolName: 'query_expand',
+      result: expansion,
+    })
     // S-1 决策 A1 全序列顺序：tool_start -> tool_result -> insight(expansion) -> done
     const toolStartIdx = posted.findIndex(
       (m) => m.type === 'tool_start' && m.toolCallId === 'call_e1',
@@ -790,15 +932,6 @@ describe('tool auxiliary messages', () => {
     // 终端事件断言：done 是最后一条消息且只出现一次
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
     expect(posted.filter((m) => m.type === 'done')).toHaveLength(1)
-      kind: 'expansion',
-      data: expansion,
-    })
-    expect(posted).toContainEqual({
-      type: 'tool_result',
-      toolCallId: 'call_e1',
-      toolName: 'query_expand',
-      result: expansion,
-    })
   })
 
   it('tool-error pushes error message with tool name context', async () => {
@@ -821,6 +954,7 @@ describe('tool auxiliary messages', () => {
     expect(errorMsg!.message).toContain('timeout')
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
+
   it('classifies BilibiliNetworkError with its structured cause', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
@@ -896,7 +1030,6 @@ describe('tool auxiliary messages', () => {
       message: 'B站接口异常',
     })
   })
-
 
   it('registers 5 tools with streamText', async () => {
     setupValidProvider()

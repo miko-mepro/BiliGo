@@ -43,12 +43,21 @@ export const SYSTEM_PROMPT = `你是 Bilibili 视频搜索助手。请严格按�
 - 每次工具调用前先简短说明你的计划，再发起调用。
 - 当用户只是闲聊或问与视频搜索无关的问题时，可以直接回答，不调用任何工具。`
 
+/**
+ * 聊天流的总耗时上限（N-2）：高于单次工具/视觉请求的 30 秒，
+ * 低于聊天 Port 心跳的 60 秒，用于兜住上游既不产出也不报错的卡死场景。
+ * 45 秒是当前暂定值，阶段0运行时证据采集后再按真实模型响应时间校准。
+ */
+export const CHAT_STREAM_TIMEOUT_MS = 45_000
+
 export interface PortState {
   disconnected: boolean
 }
 
 export interface PortSession extends PortState {
   abortController: AbortController | null
+  /** 当前聊天流的中断原因，用于区分超时反馈与用户/连接主动取消。 */
+  abortReason: 'timeout' | 'user' | 'disconnect' | null
   /**
    * 最近一次 bilibili_search 生成的批次标识（S-3）。
    * video_rerank 推送重排结果时读取此值复用同一 batchId，
@@ -143,6 +152,35 @@ function classifyToolError(
 
   const code = inferErrorCode(error)
   return { code, message: `工具 ${toolName} 执行失败: ${errorText}` }
+}
+
+/**
+ * 合并多个取消信号，并兼容缺少 AbortSignal.any 的测试运行时或旧版浏览器。
+ * 返回清理函数，避免长时间聊天结束后仍由旧信号持有监听器。
+ */
+function combineAbortSignals(signals: AbortSignal[]): { signal: AbortSignal; cleanup: () => void } {
+  if (typeof AbortSignal.any === 'function') {
+    return { signal: AbortSignal.any(signals), cleanup: () => undefined }
+  }
+
+  const controller = new AbortController()
+  const onAbort = (): void => controller.abort()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort()
+      break
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      for (const signal of signals) {
+        signal.removeEventListener('abort', onAbort)
+      }
+    },
+  }
 }
 
 function resolveActiveProvider(
@@ -408,21 +446,44 @@ export async function handleChatMessage(
 
   const abortController = new AbortController()
   session.abortController = abortController
+  session.abortReason = null
+
+  // 合并手动取消与总超时；监听器在 finally 中移除，避免正常结束后误标记超时。
+  const timeoutSignal = AbortSignal.timeout(CHAT_STREAM_TIMEOUT_MS)
+  const handleTimeout = (): void => {
+    if (session.abortReason !== null) return
+    session.abortReason = 'timeout'
+    abortController.abort()
+  }
+  timeoutSignal.addEventListener('abort', handleTimeout, { once: true })
+  const combinedAbort = combineAbortSignals([abortController.signal, timeoutSignal])
+  let timeoutErrorSent = false
+  const reportTimeout = (): void => {
+    if (timeoutErrorSent || session.abortReason !== 'timeout') return
+    timeoutErrorSent = true
+    postToPort(port, session, {
+      type: 'error',
+      message: friendlyMessage('TIMEOUT', '聊天流请求超时，请稍后重试'),
+      code: 'TIMEOUT',
+    })
+  }
 
   // 维护 toolCallId -> tool input 的映射，用于在 tool-result 时获取
   // video_rerank 的原始候选视频列表（3.2 §6.3 双重推送需要重建重排后的视频列表）。
   const toolInputs = new Map<string, unknown>()
 
-  const result = streamText({
-    model,
-    system: SYSTEM_PROMPT,
-    messages: modelMessages,
-    tools,
-    stopWhen: isStepCount(5),
-    abortSignal: abortController.signal,
-  })
-
   try {
+    // 将 streamText 创建也放入 try，确保 SDK 同步抛错时同样释放信号和 WorkingMemory。
+    const result = streamText({
+      model,
+      system: SYSTEM_PROMPT,
+      messages: modelMessages,
+      tools,
+      stopWhen: isStepCount(5),
+      // 同时响应用户/断线取消和聊天流总超时。
+      abortSignal: combinedAbort.signal,
+    })
+
     // 运行时防御：校验 stream 是否为可迭代对象
     if (!result.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
       throw new Error('模型未返回可迭代流')
@@ -456,12 +517,12 @@ export async function handleChatMessage(
           postToPort(port, session, {
             type: 'tool_result',
             toolCallId: part.toolCallId,
-          // 再推送附加 videos/insight 消息
-          // 传入 toolCallId 用于派生视频批次标识（S-3）
-          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
             toolName: part.toolName,
             result: part.output,
           })
+          // 再推送附加 videos/insight 消息
+          // 传入 toolCallId 用于派生视频批次标识（S-3）
+          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
           break
         }
         case 'tool-error': {
@@ -475,6 +536,8 @@ export async function handleChatMessage(
           break streamLoop
         }
         case 'abort':
+          // 某些 AI SDK 实现以 abort 事件结束迭代，不一定抛出 AbortError。
+          reportTimeout()
           break streamLoop
         case 'error': {
           const errorText = String(part.error)
@@ -491,7 +554,10 @@ export async function handleChatMessage(
       }
     }
   } catch (err) {
-    if (!isAbortError(err)) {
+    if (session.abortReason === 'timeout') {
+      // 总超时需要反馈给用户；用户停止和 Port 断开仍保持静默取消行为。
+      reportTimeout()
+    } else if (!isAbortError(err)) {
       const message = err instanceof Error ? err.message : String(err)
       const code = inferErrorCode(err)
       postToPort(port, session, {
@@ -501,6 +567,8 @@ export async function handleChatMessage(
       })
     }
   } finally {
+    combinedAbort.cleanup()
+    timeoutSignal.removeEventListener('abort', handleTimeout)
     // 会话结束清理 WorkingMemory（3.3 §2.1 末尾 / 3.7 §3.1 资源释放）
     // 失败静默，不阻断 done 推送
     try {
@@ -520,6 +588,7 @@ export function handlePing(port: chrome.runtime.Port, session: PortState): void 
 
 export function handleStop(session: PortSession): void {
   if (session.abortController) {
+    if (session.abortReason === null) session.abortReason = 'user'
     session.abortController.abort()
   }
 }
@@ -655,9 +724,14 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== portName) return
 
-    const session: PortSession = { disconnected: false, abortController: null }
+    const session: PortSession = {
+      disconnected: false,
+      abortController: null,
+      abortReason: null,
+    }
     port.onDisconnect.addListener(() => {
       session.disconnected = true
+      if (session.abortReason === null) session.abortReason = 'disconnect'
       if (session.abortController) {
         session.abortController.abort()
       }

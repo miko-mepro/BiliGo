@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useChat, useAgentInsights } from '../content/chat-context.js'
 import type { TimedUnderstanding, TimedExpansion, TimedRerank } from '../content/chat-context.js'
 import { ChatMessageItem } from './ChatMessage.js'
@@ -14,6 +14,12 @@ interface MessageListProps {
   emptyStateText?: string;
   videos?: BilibiliVideoCard[];
 }
+
+/** 距离底部在 80px 内视为仍在底部，避免轻微滚动就失去流式跟随。 */
+const SCROLL_BOTTOM_THRESHOLD = 80;
+
+/** 限制流式 chunk 触发 scrollIntoView 的频率，避免 smooth 动画叠加。 */
+const SCROLL_THROTTLE_MS = 100;
 
 /** Render items are merged from messages + insights, sorted by arrival time. */
 type RenderItem =
@@ -46,6 +52,19 @@ function VideoBatchBlock({ batch }: { batch: VideoBatch }): React.ReactElement |
   const [sortField, setSortField] = useState<SortField>('play');
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const [durationFilter, setDurationFilter] = useState<DurationFilter>('all');
+  const userSelectedSortRef = useRef(false);
+
+  // 后端重排到达时，只有用户尚未手动选择排序才切换到智能排序。
+  useEffect(() => {
+    if (batch.reranked && !userSelectedSortRef.current) {
+      setSortField('rerank');
+    }
+  }, [batch.batchId, batch.reranked]);
+
+  const handleSortChange = useCallback((nextSortField: SortField) => {
+    userSelectedSortRef.current = true;
+    setSortField(nextSortField);
+  }, []);
 
   const processedVideos = useMemo(() => {
     return applySortAndFilter(batch.videos, sortField, dateFilter, durationFilter);
@@ -59,7 +78,7 @@ function VideoBatchBlock({ batch }: { batch: VideoBatch }): React.ReactElement |
         sortField={sortField}
         dateFilter={dateFilter}
         durationFilter={durationFilter}
-        onSortChange={setSortField}
+        onSortChange={handleSortChange}
         onDateFilterChange={setDateFilter}
         onDurationFilterChange={setDurationFilter}
       />
@@ -104,6 +123,24 @@ export function MessageList({
   }, [providedVideos, state.videoBatches]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [userScrolled, setUserScrolled] = useState(false);
+  const lastScrollAtRef = useRef(0);
+  const previousLoadingRef = useRef(state.isLoading);
+
+  // 只把实际滚动容器的位置作为用户阅读状态来源；该元素由 CSS 设置 overflow-y:auto。
+  const handleScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = Math.max(
+      0,
+      container.scrollHeight - container.scrollTop - container.clientHeight,
+    );
+    const atBottom = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
+    setIsAtBottom(atBottom);
+    setUserScrolled(!atBottom);
+  }, []);
 
   // 筛选/排序状态已下沉到 VideoBatchBlock（S-3）：每个批次独立维护，
   // 因此这里不再有全局 sortField/dateFilter/durationFilter，
@@ -143,10 +180,22 @@ export function MessageList({
     return items;
   }, [state.messages, understandings, expansions, reranks, videoBatches, state.isLoading, state.streamingContent]);
 
-  // Auto-scroll to bottom when new messages arrive
+  // 用户上拉后暂停自动滚动；仍在底部时跟随新消息，但限制高频调用次数。
   useEffect(() => {
+    if (userScrolled || !isAtBottom) return;
+    const now = Date.now();
+    if (now - lastScrollAtRef.current < SCROLL_THROTTLE_MS) return;
+    lastScrollAtRef.current = now;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [renderItems.length, state.streamingContent, state.streamingReasoning, videoBatches]);
+  }, [renderItems.length, state.streamingContent, state.streamingReasoning, videoBatches, isAtBottom, userScrolled]);
+
+  // 流结束时只清理节流时间戳，不强制把已上拉的用户拉回底部。
+  useEffect(() => {
+    if (previousLoadingRef.current && !state.isLoading) {
+      lastScrollAtRef.current = 0;
+    }
+    previousLoadingRef.current = state.isLoading;
+  }, [state.isLoading]);
 
   const hasMessages = state.messages.length > 0;
   const hasVideos = videoBatches.some((batch) => batch.videos.length > 0);
@@ -171,7 +220,7 @@ export function MessageList({
   }
 
   return (
-    <div ref={containerRef} className="bili-agent-message-list">
+    <div ref={containerRef} className="bili-agent-message-list" onScroll={handleScroll}>
       {!hasMessages && !hasVideos && !hasInsights ? (
         <div className="bili-agent-message-list__empty">
           <div className="bili-agent-message-list__empty-icon">

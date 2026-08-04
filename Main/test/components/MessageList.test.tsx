@@ -673,6 +673,140 @@ describe('MessageList', () => {
     });
   });
 
+  // ===== 阶段4缺口4：时间锚点交错归属 =====
+  describe('时间锚点交错归属（阶段4缺口4）', () => {
+    it('第一次insight/视频在第二次assistant/insight/视频之前，旧批次不被新批次覆盖', () => {
+      // 时间线：
+      // t=500: user搜索1
+      // t=1000: assistant回答1
+      // t=1500: insight理解1
+      // t=1500: batch1锚点（第一次视频）
+      // t=2500: user搜索2
+      // t=3000: assistant回答2
+      // t=3500: insight理解2
+      // t=3500: batch2锚点（第二次视频）
+      mockInsights = {
+        understandings: [
+          {
+            original: 'awsl1',
+            normalized: '理解1',
+            explanation: '第一次搜索的理解',
+            matchedDict: false,
+            receivedAt: 1500,
+          },
+          {
+            original: 'awsl2',
+            normalized: '理解2',
+            explanation: '第二次搜索的理解',
+            matchedDict: false,
+            receivedAt: 3500,
+          },
+        ],
+        expansions: [],
+        reranks: [],
+        clarification: null,
+      };
+      mockState = {
+        ...mockState,
+        messages: [
+          { role: 'user', content: '搜索鬼畜', timestamp: 500 },
+          { role: 'assistant', content: '第一次回答', timestamp: 1000 },
+          { role: 'user', content: '搜索编程', timestamp: 2500 },
+          { role: 'assistant', content: '第二次回答', timestamp: 3000 },
+        ],
+        videoBatches: [
+          makeBatch('batch1', [makeVideo('BV1', '第一次视频')], 1500),
+          makeBatch('batch2', [makeVideo('BV2', '第二次视频')], 3500),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      const messagesDiv = container.querySelector('.bili-agent-message-list__messages');
+      const children = Array.from(messagesDiv!.children).filter(
+        (el) => !el.hasAttribute('ref'),
+      );
+
+      // 按 data-testid 或文本内容找各元素
+      const understandingCards = children.filter(
+        (el) => el.getAttribute('data-testid') === 'agent-insight-understanding',
+      );
+      const videoGrids = children.filter((el) => el.getAttribute('data-testid') === 'video-grid');
+      const firstAnswerIdx = children.findIndex((el) => el.textContent?.includes('第一次回答'));
+      const secondAnswerIdx = children.findIndex((el) => el.textContent?.includes('第二次回答'));
+
+      // 断言：两个 understanding 卡片和两个 video grid
+      expect(understandingCards).toHaveLength(2);
+      expect(videoGrids).toHaveLength(2);
+
+      // 断言DOM顺序：第一次回答 < 第一个理解卡片 < 第一个视频网格 < 第二次回答 < 第二个理解卡片 < 第二个视频网格
+      const firstUnderstandingIdx = children.indexOf(understandingCards[0]);
+      const secondUnderstandingIdx = children.indexOf(understandingCards[1]);
+      const firstVideoGridIdx = children.indexOf(videoGrids[0]);
+      const secondVideoGridIdx = children.indexOf(videoGrids[1]);
+
+      expect(firstAnswerIdx).toBeLessThan(firstUnderstandingIdx);
+      expect(firstUnderstandingIdx).toBeLessThan(firstVideoGridIdx);
+      expect(firstVideoGridIdx).toBeLessThan(secondAnswerIdx);
+      expect(secondAnswerIdx).toBeLessThan(secondUnderstandingIdx);
+      expect(secondUnderstandingIdx).toBeLessThan(secondVideoGridIdx);
+
+      // 断言：两个批次都存在（旧批次未被覆盖）
+      expect(screen.getByText('第一次视频')).toBeInTheDocument();
+      expect(screen.getByText('第二次视频')).toBeInTheDocument();
+    });
+
+    it('insight和video batch按各自receivedAt/anchorTimestamp排序，不依赖虚构batchId', () => {
+      // 不虚构insight.batchId，insight和batch通过各自的时间戳独立排序
+      mockInsights = {
+        understandings: [
+          {
+            original: 'awsl',
+            normalized: '啊我死了',
+            explanation: '表达喜爱',
+            matchedDict: true,
+            receivedAt: 2000, // insight在两个batch之间
+          },
+        ],
+        expansions: [],
+        reranks: [],
+        clarification: null,
+      };
+      mockState = {
+        ...mockState,
+        messages: [
+          { role: 'user', content: '用户消息', timestamp: 500 },
+          { role: 'assistant', content: '回答', timestamp: 1000 },
+        ],
+        videoBatches: [
+          makeBatch('b1', [makeVideo('BV1', '早批次视频')], 1500),
+          makeBatch('b2', [makeVideo('BV2', '晚批次视频')], 2500),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      const messagesDiv = container.querySelector('.bili-agent-message-list__messages');
+      const children = Array.from(messagesDiv!.children).filter(
+        (el) => !(el instanceof HTMLDivElement && !el.hasAttribute('data-testid')),
+      );
+
+      const understandingCard = children.find(
+        (el) => el.getAttribute('data-testid') === 'agent-insight-understanding',
+      );
+      const videoGrids = children.filter((el) => el.getAttribute('data-testid') === 'video-grid');
+
+      expect(understandingCard).toBeDefined();
+      expect(videoGrids).toHaveLength(2);
+
+      // 断言DOM顺序：早批次视频(1500) < insight(2000) < 晚批次视频(2500)
+      const understandingIdx = children.indexOf(understandingCard!);
+      const firstVideoGridIdx = children.indexOf(videoGrids[0]);
+      const secondVideoGridIdx = children.indexOf(videoGrids[1]);
+
+      expect(firstVideoGridIdx).toBeLessThan(understandingIdx);
+      expect(understandingIdx).toBeLessThan(secondVideoGridIdx);
+    });
+  });
+
   describe('客户端重排顺序（S-4）', () => {
     it('rerank 批次默认保持后端顺序，不被播放量排序覆盖', () => {
       mockState = {
@@ -748,6 +882,216 @@ describe('MessageList', () => {
       const text = container.textContent ?? '';
 
       expect(text.indexOf('发布时间第一')).toBeLessThan(text.indexOf('播放量第一'));
+    });
+
+    // ===== 阶段4缺口6：策略C - rerank与播放量冲突时默认进入智能排序 =====
+    it('阶段4缺口6：rerank更新后未手动选择时默认智能排序，DOM保持后端顺序', () => {
+      // 策略C：batch.reranked=true且用户未手动选择时，sortField自动切换为'rerank'
+      // 视频播放量有冲突（播放量第一vs后端第一），但默认进入rerank排序
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '重排结果', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV3', '后端第一', { play: 50 }),
+              makeVideo('BV1', '播放量最高', { play: 1000 }),
+              makeVideo('BV2', '播放量中等', { play: 500 }),
+            ],
+            1000,
+            true, // reranked=true → 触发智能排序
+          ),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      const text = container.textContent ?? '';
+
+      // 默认智能排序，保持后端顺序
+      expect(text.indexOf('后端第一')).toBeLessThan(text.indexOf('播放量最高'));
+      expect(text.indexOf('播放量最高')).toBeLessThan(text.indexOf('播放量中等'));
+      // 筛选控件显示"智能排序"
+      const sortSelect = screen.getByLabelText(/排序/i) as HTMLSelectElement;
+      expect(sortSelect.value).toBe('rerank');
+    });
+
+    it('阶段4缺口6：用户手动选择播放量排序后覆盖rerank，播放量高的在前', () => {
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '重排结果', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV3', '后端第一', { play: 50 }),
+              makeVideo('BV1', '播放量最高', { play: 1000 }),
+              makeVideo('BV2', '播放量中等', { play: 500 }),
+            ],
+            1000,
+            true,
+          ),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      // 用户手动选择播放量排序
+      fireEvent.change(screen.getByLabelText(/排序/i), { target: { value: 'play' } });
+      const text = container.textContent ?? '';
+
+      // 按播放量降序：播放量最高 > 播放量中等 > 后端第一
+      expect(text.indexOf('播放量最高')).toBeLessThan(text.indexOf('播放量中等'));
+      expect(text.indexOf('播放量中等')).toBeLessThan(text.indexOf('后端第一'));
+      // 排序选择器已切换到play
+      const sortSelect = screen.getByLabelText(/排序/i) as HTMLSelectElement;
+      expect(sortSelect.value).toBe('play');
+    });
+  });
+
+  // ===== 阶段4缺口7：批次独立状态 =====
+  describe('批次独立状态（阶段4缺口7）', () => {
+    it('同batch视频更新后保留用户手动sort/date/duration选择', () => {
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '搜索结果', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '视频A', { pubdate: 1000, duration: '30:00', play: 500 }),
+            makeVideo('BV2', '视频B', { pubdate: 2000, duration: '5:00', play: 100 }),
+          ], 1000),
+        ],
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      // 用户选择按发布时间排序 + 时长筛选"长视频"
+      fireEvent.change(screen.getByLabelText(/排序/i), { target: { value: 'pubdate' } });
+      fireEvent.change(screen.getByLabelText(/时长/i), { target: { value: 'long' } });
+
+      // 验证当前筛选结果：仅视频A（30:00 > 20分钟）
+      let text = container.textContent ?? '';
+      expect(text).toContain('视频A');
+      expect(text).not.toContain('视频B');
+
+      // 同batch更新（rerank推送新顺序），保留用户手动选择
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV2', '视频B', { pubdate: 2000, duration: '5:00', play: 100 }),
+            makeVideo('BV1', '视频A', { pubdate: 1000, duration: '30:00', play: 500 }),
+          ], 1000, true),
+        ],
+      };
+      rerender(<MessageList />);
+
+      // 断言：用户手动筛选状态保留，仍只显示视频A（长视频）
+      text = container.textContent ?? '';
+      expect(text).toContain('视频A');
+      expect(text).not.toContain('视频B');
+
+      // 排序和时长选择器继续保持用户选择
+      const sortSelect = screen.getByLabelText(/排序/i) as HTMLSelectElement;
+      const durationSelect = screen.getByLabelText(/时长/i) as HTMLSelectElement;
+      expect(sortSelect.value).toBe('pubdate');
+      expect(durationSelect.value).toBe('long');
+    });
+
+    it('新batch拥有默认筛选排序状态且不串扰旧batch', () => {
+      // 阶段4缺口7：两批次独立状态
+      // 旧batch用户手动选择了"播放量排序"，新batch应该使用默认状态（play），互不干扰
+      mockState = {
+        ...mockState,
+        messages: [
+          { role: 'assistant', content: '第一次回答', timestamp: 1000 },
+          { role: 'assistant', content: '第二次回答', timestamp: 3000 },
+        ],
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '旧视频A', { play: 100 }),
+            makeVideo('BV2', '旧视频B', { play: 200 }),
+          ], 1000),
+        ],
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      // 在旧batch上手动选择"发布时间排序"
+      const allSorts = screen.getAllByLabelText(/排序/i);
+      expect(allSorts).toHaveLength(1);
+      fireEvent.change(allSorts[0], { target: { value: 'pubdate' } });
+
+      // 追加新batch（第二次搜索）
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '旧视频A', { play: 100 }),
+            makeVideo('BV2', '旧视频B', { play: 200 }),
+          ], 1000),
+          makeBatch('b2', [
+            makeVideo('BV3', '新视频C', { play: 300 }),
+            makeVideo('BV4', '新视频D', { play: 50 }),
+          ], 3000),
+        ],
+      };
+      rerender(<MessageList />);
+
+      // 现在有两个筛选控件组（用 querySelectorAll 因为 FilterSortControls 有重复的 id）
+      const sortSelects = container.querySelectorAll('#bili-agent-sort') as NodeListOf<HTMLSelectElement>;
+      expect(sortSelects).toHaveLength(2);
+
+      // 旧batch保持用户选择 pubdate，新batch默认值 play
+      expect(sortSelects[0].value).toBe('pubdate');
+      expect(sortSelects[1].value).toBe('play');
+
+      // 验证DOM顺序：旧batch在DOM中排在前，新batch在后
+      const videoGrids = screen.getAllByTestId('video-grid');
+      expect(videoGrids).toHaveLength(2);
+    });
+
+    it('新batch拥有默认日期筛选且不继承旧batch的时长筛选', () => {
+      mockState = {
+        ...mockState,
+        messages: [
+          { role: 'assistant', content: '第一次回答', timestamp: 1000 },
+        ],
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '旧视频', { duration: '30:00' }),
+            makeVideo('BV2', '旧视频短', { duration: '3:00' }),
+          ], 1000),
+        ],
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      // 旧batch筛选"长视频"
+      fireEvent.change(screen.getByLabelText(/时长/i), { target: { value: 'long' } });
+
+      // 追加新batch
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '旧视频', { duration: '30:00' }),
+            makeVideo('BV2', '旧视频短', { duration: '3:00' }),
+          ], 1000),
+          makeBatch('b2', [
+            makeVideo('BV3', '新视频', { duration: '10:00' }),
+          ], 3000),
+        ],
+      };
+      rerender(<MessageList />);
+
+      // 旧batch时长筛选保持为 long，新batch时长筛选为默认值 'all'
+      const durationSelects = container.querySelectorAll('#bili-agent-duration-filter') as NodeListOf<HTMLSelectElement>;
+      expect(durationSelects).toHaveLength(2);
+      expect(durationSelects[0].value).toBe('long');
+      expect(durationSelects[1].value).toBe('all');
+
+      // 旧batch日期筛选保持默认，新batch也是默认
+      const dateSelects = container.querySelectorAll('#bili-agent-date-filter') as NodeListOf<HTMLSelectElement>;
+      expect(dateSelects).toHaveLength(2);
+      expect(dateSelects[0].value).toBe('all');
+      expect(dateSelects[1].value).toBe('all');
     });
   });
 });
