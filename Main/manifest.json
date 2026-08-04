@@ -16,18 +16,6 @@
   "permissions": ["storage", "cookies"],
   "host_permissions": [
     "*://*.bilibili.com/*",
-    "https://api.openai.com/*",
-    "https://api.anthropic.com/*",
-    "https://generativelanguage.googleapis.com/*",
-    "https://api.deepseek.com/*",
-    "https://api.moonshot.cn/*",
-    "https://open.bigmodel.cn/*",
-    "https://dashscope.aliyuncs.com/*",
-    "https://openrouter.ai/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
-  ],
-  "optional_host_permissions": [
     "https://*/*",
     "http://*/*"
   ],

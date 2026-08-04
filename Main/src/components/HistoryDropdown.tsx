@@ -85,11 +85,29 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
   const inputRef = useRef<HTMLInputElement>(null)
   // 持有 HistorySync 实例，组件卸载时 stop
   const syncRef = useRef<HistorySync | null>(null)
+  // 标记组件卸载，防止 pending 的重命名 Promise 返回后写入过期状态。
+  const renameCancelRef = useRef(false)
+  // 重命名操作代次计数器，每次 handleRenameConfirm 调用时自增，
+  // 异步完成时检查代次是否匹配，丢弃过期结果（旧请求覆盖新标题问题）。
+  const renameGenerationRef = useRef(0)
+
+  // 组件重新挂载时允许新的重命名；卸载后旧闭包只能忽略结果。
+  useEffect(() => {
+    renameCancelRef.current = false
+    return () => {
+      renameCancelRef.current = true
+      // 代次归零，使所有 pending 的旧请求不再匹配，避免输出过期错误日志。
+      renameGenerationRef.current = 0
+    }
+  }, [])
 
   // 展开时加载历史索引
   useEffect(() => {
     if (!isOpen) return
     let cancelled = false
+    // 打开下拉后先进入 loading，避免异步索引返回前误显示“暂无记录”。
+    // 此处是该 effect 的明确 UI 入口，保留同步状态切换并局部豁免规则。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     getIndex()
       .then((fetchedRecords) => {
@@ -131,7 +149,7 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
       inputRef.current.focus()
       inputRef.current.select()
     }
-  }, [editing?.id])
+  }, [editing])
 
   const handleLoad = useCallback(
     async (id: string) => {
@@ -179,16 +197,26 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
         setEditing(null)
         return
       }
+      // 自增代次计数器，用于异步完成时识别请求是否已过期
+      renameGenerationRef.current += 1
+      const generation = renameGenerationRef.current
       try {
         await onRename(id, newTitle)
+        // 代次不匹配说明已有新请求发起，丢弃旧结果避免覆盖。
+        if (generation !== renameGenerationRef.current) return
         setRecords((prev) =>
           prev.map((item) => (item.id === id ? { ...item, title: newTitle } : item)),
         )
       } catch (err) {
+        // 过期请求的错误不输出，避免旧组件的误导日志。
+        if (generation !== renameGenerationRef.current) return
         console.warn('[BiliAgent] history onRename failed', err)
       } finally {
-        editingRef.current = false
-        setEditing(null)
+        // 只有当前代次才负责清理编辑态；新代次已开始则交由新代次处理。
+        if (generation === renameGenerationRef.current) {
+          editingRef.current = false
+          setEditing(null)
+        }
       }
     },
     [editing, onRename],
@@ -211,12 +239,24 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
 
   if (!isOpen) return null
 
+  // 渲染层防御性兜底（R-1）：上游 store.ts / sync.ts 已接入 sanitizeHistoryIndex 校验，
+  // 此处是最终保险——即使未来新增数据入口忘记接入校验，也不会在 render 阶段崩溃。
+  //
+  // 注意这里统一归一化整条记录的 title，而非只在搜索过滤处加 typeof 保护，
+  // 因为非字符串 title 在本组件有两条独立的崩溃路径：
+  //   1) 搜索过滤调用 r.title.toLowerCase() → TypeError（需输入搜索词才触发）
+  //   2) <TitleWithScroll text={item.title} /> 渲染对象 title
+  //      → "Objects are not valid as a React child"（打开下拉即触发，无需搜索）
+  // 归一化后，下游的 TitleWithScroll、handleRenameStart 等消费点全部拿到字符串。
+  const safeRecords = records.map((r) =>
+    typeof r.title === 'string' ? r : { ...r, title: '' },
+  )
+
   // 搜索过滤：匹配标题（大小写不敏感）
-  const filtered = searchQuery.trim()
-    ? records.filter((r) =>
-        r.title.toLowerCase().includes(searchQuery.trim().toLowerCase()),
-      )
-    : records
+  const normalizedQuery = searchQuery.trim().toLowerCase()
+  const filtered = normalizedQuery
+    ? safeRecords.filter((r) => r.title.toLowerCase().includes(normalizedQuery))
+    : safeRecords
 
   return (
     <div className="bili-agent-history-dropdown" role="listbox" aria-label="历史对话列表" data-no-drag>

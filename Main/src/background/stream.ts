@@ -21,6 +21,12 @@ import { createBilibiliSearchTool } from '../tools/bilibili-search.js'
 import { createVideoRerankTool } from '../tools/video-rerank.js'
 import { askClarification } from '../tools/ask-clarification.js'
 import { analyzeCovers } from '../tools/analyze-covers.js'
+import {
+  getMandatorySkillBodies,
+  listSkillMetadata,
+  loadSkillBody,
+  readSkillResource,
+} from '../skills/registry.js'
 import type {
   SlangUnderstandResult,
   QueryExpandResult,
@@ -38,10 +44,62 @@ export const SYSTEM_PROMPT = `你是 Bilibili 视频搜索助手。请严格按�
 5. **展示或澄清**：如果你对结果有信心，直接用自然语言总结并展示；如果意图非常模糊或多义且本会话还没追问过，调用 ask_clarification 追问（每会话最多 1 次）。
 
 硬性规则：
-- 单次会话工具调用不超过 5 轮，超过就停止调用工具直接回答。
+- 单次模型请求最多执行 7 个模型步骤（包括初始响应和后续工具步骤），超过就停止调用工具直接回答。
 - 不要跳过第 1、2 步直接搜索；除非用户输入已经是非常具体、明确的标准中文关键词。
 - 每次工具调用前先简短说明你的计划，再发起调用。
-- 当用户只是闲聊或问与视频搜索无关的问题时，可以直接回答，不调用任何工具。`
+- 当用户只是闲聊或问与视频搜索无关的问题时，可以直接回答，不调用任何工具。
+- 你可以使用 Markdown 格式（如 **粗体**、\`行内代码\`、列表、表格等）来组织回复，让内容更易读。`
+
+type MandatorySkillBodies = Awaited<ReturnType<typeof getMandatorySkillBodies>>
+
+const mandatorySkillCache = new Map<string, MandatorySkillBodies>()
+
+/**
+ * 按请求重新组装系统提示；mandatory 正文会重复带入每次请求，避免依赖上一次
+ * streamText 的上下文，而 autonomous 正文和资源只通过技能工具渐进加载。
+ */
+export function buildSystemPrompt(mandatoryBodies: MandatorySkillBodies): string {
+  const metadata = JSON.stringify(listSkillMetadata())
+  const bodies = mandatoryBodies
+    .map((body, index) => `### mandatory skill ${index + 1}\n${body}`)
+    .join('\n\n')
+
+  return `${SYSTEM_PROMPT}
+
+技能加载规则：
+- 下面的技能索引只包含元数据；不要把 autonomous 技能正文或引用资源当作已加载内容。
+- 需要使用 autonomous 技能时，调用 load_skill，并传入对应的 name；只在当前任务确实需要时加载。
+- 当已加载的 SKILL.md 明确引用某个文本资源且当前任务需要该资源时，调用 read_skill_file，传入 skill 和相对 path。
+- load_skill 只返回 SKILL.md 正文；read_skill_file 只返回选中的文本资源。工具返回结构化错误时，先根据错误重试或安全地继续回答。
+- 技能规则只约束最终助手回复，不改变工具实现、代码注释或 Git 提交信息。
+
+技能元数据索引：
+${metadata}
+
+已预加载的 mandatory 技能正文：
+${bodies}`
+}
+
+async function getCachedMandatorySkillBodies(conversationId: string): Promise<MandatorySkillBodies> {
+  const cached = mandatorySkillCache.get(conversationId)
+  if (cached !== undefined) return cached
+
+  const bodies = await getMandatorySkillBodies()
+  mandatorySkillCache.set(conversationId, bodies)
+  return bodies
+}
+
+/** 仅供测试隔离会话级缓存；MV3 worker 重启时模块重新加载也会自然清空缓存。 */
+export function resetMandatorySkillCache(): void {
+  mandatorySkillCache.clear()
+}
+
+/**
+ * 聊天流的总耗时上限（N-2）：高于单次工具/视觉请求的 30 秒，
+ * 低于聊天 Port 心跳的 60 秒，用于兜住上游既不产出也不报错的卡死场景。
+ * 45 秒是当前暂定值，阶段0运行时证据采集后再按真实模型响应时间校准。
+ */
+export const CHAT_STREAM_TIMEOUT_MS = 45_000
 
 export interface PortState {
   disconnected: boolean
@@ -49,11 +107,26 @@ export interface PortState {
 
 export interface PortSession extends PortState {
   abortController: AbortController | null
+  /** 当前聊天流的中断原因，用于区分超时反馈与用户/连接主动取消。 */
+  abortReason: 'timeout' | 'user' | 'disconnect' | null
+  /**
+   * 最近一次 bilibili_search 生成的批次标识（S-3）。
+   * video_rerank 推送重排结果时读取此值复用同一 batchId，
+   * 使 content script 把重排识别为「同批次更新」而非「新批次」。
+   * 断线重连后 session 重建，该字段自然重置为 undefined。
+   */
+  lastSearchBatchId?: string
 }
 
 export function postToPort(port: chrome.runtime.Port, state: PortState, msg: SWMessage): void {
   if (state.disconnected) return
-  port.postMessage(msg)
+  try {
+    port.postMessage(msg)
+  } catch {
+    // Port 失效时 Chrome 可能晚于实际断线才触发 onDisconnect；发送失败立即收敛状态，
+    // 防止 rerank 的第二次辅助推送和会话结束消息继续把异常抛到调用栈顶层。
+    state.disconnected = true
+  }
 }
 
 export function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
@@ -72,6 +145,98 @@ function isAbortError(err: unknown): boolean {
   if (err instanceof Error && err.name === 'AbortError') return true
   if (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError') return true
   return false
+}
+
+function isErrorRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/**
+ * AI SDK 可能传递原始 Error，也可能传递字符串化错误；两种形态都需要保留错误名。
+ */
+function getToolErrorName(error: unknown): string | undefined {
+  if (error instanceof Error) return error.name
+  if (isErrorRecord(error) && typeof error.name === 'string') return error.name
+  if (typeof error === 'string') {
+    return /^(Bilibili(?:Network|Risk|Api)Error)\s*:/i.exec(error)?.[1]
+  }
+  return undefined
+}
+
+function getToolErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (isErrorRecord(error) && typeof error.message === 'string') return error.message
+  return typeof error === 'string' ? error : String(error)
+}
+
+function hasSerializedToolErrorName(error: unknown, name: string): boolean {
+  const text = getToolErrorMessage(error)
+  return new RegExp(`\\b${name}\\s*:`, 'i').test(text)
+}
+
+/**
+ * 在 tool-error 边界区分 Bilibili 网络/业务错误与普通工具错误。
+ * 网络错误复用 N-1 的结构化 cause 分类；普通错误保留工具名，避免误报为网络故障。
+ */
+function classifyToolError(
+  toolName: string,
+  error: unknown,
+): { code: string; message: string } {
+  const errorName = getToolErrorName(error)
+  const errorText = getToolErrorMessage(error)
+  const isNetworkError = errorName === 'BilibiliNetworkError'
+    || hasSerializedToolErrorName(error, 'BilibiliNetworkError')
+
+  if (isNetworkError) {
+    const code = inferErrorCode(error)
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const isRiskError = errorName === 'BilibiliRiskError'
+    || hasSerializedToolErrorName(error, 'BilibiliRiskError')
+  if (isRiskError) {
+    const code = 'BILIBILI_RISK'
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const isApiError = errorName === 'BilibiliApiError'
+    || hasSerializedToolErrorName(error, 'BilibiliApiError')
+  if (isApiError) {
+    const code = 'BILIBILI_API'
+    return { code, message: friendlyMessage(code, errorText) }
+  }
+
+  const code = inferErrorCode(error)
+  return { code, message: `工具 ${toolName} 执行失败: ${errorText}` }
+}
+
+/**
+ * 合并多个取消信号，并兼容缺少 AbortSignal.any 的测试运行时或旧版浏览器。
+ * 返回清理函数，避免长时间聊天结束后仍由旧信号持有监听器。
+ */
+function combineAbortSignals(signals: AbortSignal[]): { signal: AbortSignal; cleanup: () => void } {
+  if (typeof AbortSignal.any === 'function') {
+    return { signal: AbortSignal.any(signals), cleanup: () => undefined }
+  }
+
+  const controller = new AbortController()
+  const onAbort = (): void => controller.abort()
+  for (const signal of signals) {
+    if (signal.aborted) {
+      controller.abort()
+      break
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      for (const signal of signals) {
+        signal.removeEventListener('abort', onAbort)
+      }
+    },
+  }
 }
 
 function resolveActiveProvider(
@@ -121,7 +286,7 @@ function bindMemoryStore(traceId: string) {
 const askClarificationMemoryStore = WorkingMemoryStore
 
 /**
- * 构造 5 个 AI SDK tool，注入所需依赖（3.3 §2.1 第 4 步 / 3.2 §6）。
+ * 构造现有视频工具和技能工具，注入所需依赖（3.3 §2.1 第 4 步 / 3.2 §6）。
  *
  * - slang_understand / query_expand / video_rerank：使用 `createXxxTool` 工厂，
  *   注入 bindMemoryStore(traceId) 适配器。
@@ -129,13 +294,13 @@ const askClarificationMemoryStore = WorkingMemoryStore
  *   （由 bilibili_search 参数 `analyze_covers` 触发，不注册为独立 tool）。
  * - ask_clarification：裸函数 `askClarification`，用 `tool()` 包装为 AI SDK tool。
  */
-function buildTools(traceId: string): ToolSet {
+function buildTools(traceId: string, onActivity?: () => void): ToolSet {
   const boundMemory = bindMemoryStore(traceId)
 
   const slangUnderstand = createSlangUnderstandTool({ memoryStore: boundMemory })
   const queryExpand = createQueryExpandTool({ memoryStore: boundMemory })
   const bilibiliSearch = createBilibiliSearchTool({ analyzeCovers })
-  const videoRerank = createVideoRerankTool({ memoryStore: boundMemory })
+  const videoRerank = createVideoRerankTool({ memoryStore: boundMemory, onActivity })
 
   const askClarificationTool = tool({
     description:
@@ -154,35 +319,68 @@ function buildTools(traceId: string): ToolSet {
     },
   })
 
+  const loadSkillTool = tool({
+    description: '按名称加载一个 autonomous 技能的 SKILL.md 正文，不自动加载引用资源',
+    inputSchema: z.object({
+      name: z.string(),
+    }),
+    execute: async ({ name }) => loadSkillBody(name),
+  })
+
+  const readSkillFileTool = tool({
+    description: '读取已加载技能明确引用的、位于该技能目录内的文本资源',
+    inputSchema: z.object({
+      skill: z.string(),
+      path: z.string(),
+    }),
+    execute: async ({ skill, path }) => readSkillResource(skill, path),
+  })
+
   return {
     slang_understand: slangUnderstand,
     query_expand: queryExpand,
     bilibili_search: bilibiliSearch,
     video_rerank: videoRerank,
     ask_clarification: askClarificationTool,
+    load_skill: loadSkillTool,
+    read_skill_file: readSkillFileTool,
   } as ToolSet
 }
 
 /**
  * 在 tool-result 事件中按 toolName 推送附加的 videos/insight 消息（3.2 §6 / §9.2）。
  *
- * 顺序保证（3.2 §9.2）：tool_start -> videos/insight -> tool_result。
- * 本函数在 tool-result case 中先推送附加消息（videos/insight），
- * 再由调用方推送 tool_result，从而保证顺序为 tool_start -> videos/insight -> tool_result。
+ * 顺序（S-1 决策 A1）：tool_start -> tool_result -> videos/insight -> done。
+ * 调用方先推送 tool_result，再调用本函数推送附加消息（videos/insight），
+ * 即 A1 仅把完成消息排在辅助内容之前、收窄时序窗口；
+ * 不提供原子 UI 更新，实际浏览器 UX 仍待运行时/E2E 验证。
  *
  * @param toolInput 该 toolCallId 对应的 tool-call 事件 input（video_rerank 需要从中取原始候选视频列表）
+ * @param toolCallId 该次工具调用的唯一标识，用于派生视频批次 batchId（S-3）
  */
 function postToolAuxiliaryMessages(
   port: chrome.runtime.Port,
-  session: PortState,
+  session: PortSession,
   toolName: string,
   output: unknown,
   toolInput?: unknown,
+  toolCallId?: string,
 ): void {
   switch (toolName) {
-    case 'bilibili_search':
-      postToPort(port, session, { type: 'videos', videos: output as BilibiliVideoCard[] })
+    case 'bilibili_search': {
+      // 批次标识由 toolCallId 派生（S-3 策略A）：toolCallId 天然唯一且可追溯到具体工具调用。
+      // 记录到 session 供随后的 video_rerank 复用。
+      const batchId = `search_${toolCallId ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`
+      session.lastSearchBatchId = batchId
+      postToPort(port, session, {
+        type: 'videos',
+        videos: output as BilibiliVideoCard[],
+        batchId,
+        reranked: false,
+        rerankPending: Array.isArray(output) && output.length > 3,
+      })
       break
+    }
     case 'slang_understand':
       postToPort(port, session, {
         type: 'insight',
@@ -207,7 +405,18 @@ function postToolAuxiliaryMessages(
       const candidates = extractVideoCandidates(toolInput)
       if (candidates.length > 0) {
         const reordered = reorderVideosByRerank(candidates, rerankResult.items)
-        postToPort(port, session, { type: 'videos', videos: reordered })
+        // 复用最近一次 bilibili_search 的 batchId（S-3），使重排更新落到同一批次上；
+        // 若本次会话尚无搜索批次（异常路径），降级生成独立批次标识避免丢失结果。
+        const batchId =
+          session.lastSearchBatchId
+          ?? `rerank_${toolCallId ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`
+        postToPort(port, session, {
+          type: 'videos',
+          videos: reordered,
+          batchId,
+          reranked: true,
+          rerankPending: false,
+        })
       }
       break
     }
@@ -219,7 +428,7 @@ function postToolAuxiliaryMessages(
       })
       break
     default:
-      // 未知工具名：不附加消息，仅推送 tool_result
+      // 未知工具名：不附加消息，仅由调用方推送 tool_result
       break
   }
 }
@@ -309,32 +518,72 @@ export async function handleChatMessage(
   const model: LanguageModel = createModel(config)
   const modelMessages = toModelMessages(msg.messages)
   const traceId = createTraceId(msg.conversationId)
-  await WorkingMemoryStore.create(traceId)
-  const tools = buildTools(traceId)
+  const mandatorySkillBodies = await getCachedMandatorySkillBodies(msg.conversationId)
 
   const abortController = new AbortController()
   session.abortController = abortController
+  session.abortReason = null
+
+  // 合并手动取消与总超时；监听器在 finally 中移除，避免正常结束后误标记超时。
+  // 用 setTimeout + AbortController 替代 AbortSignal.timeout()，
+  // 使定时器可在 finally 中取消，避免 release 期间超时竞态（N-2）。
+  const timeoutController = new AbortController()
+  let timeoutId: ReturnType<typeof setTimeout> = setTimeout(
+    () => timeoutController.abort(),
+    CHAT_STREAM_TIMEOUT_MS,
+  )
+  const timeoutSignal = timeoutController.signal
+  // 外层流或 rerank 内部有新活动时重新开始 45 秒空闲倒计时。
+  const resetChatTimeout = (): void => {
+    if (timeoutSignal.aborted) return
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => timeoutController.abort(), CHAT_STREAM_TIMEOUT_MS)
+  }
+  const handleTimeout = (): void => {
+    if (session.abortReason !== null) return
+    session.abortReason = 'timeout'
+    abortController.abort()
+  }
+  timeoutSignal.addEventListener('abort', handleTimeout, { once: true })
+  const combinedAbort = combineAbortSignals([abortController.signal, timeoutSignal])
+  let timeoutErrorSent = false
+  const reportTimeout = (): void => {
+    if (timeoutErrorSent || session.abortReason !== 'timeout') return
+    timeoutErrorSent = true
+    postToPort(port, session, {
+      type: 'error',
+      message: friendlyMessage('TIMEOUT', '聊天流请求超时，请稍后重试'),
+      code: 'TIMEOUT',
+    })
+  }
 
   // 维护 toolCallId -> tool input 的映射，用于在 tool-result 时获取
   // video_rerank 的原始候选视频列表（3.2 §6.3 双重推送需要重建重排后的视频列表）。
   const toolInputs = new Map<string, unknown>()
 
-  const result = streamText({
-    model,
-    system: SYSTEM_PROMPT,
-    messages: modelMessages,
-    tools,
-    stopWhen: isStepCount(5),
-    abortSignal: abortController.signal,
-  })
-
   try {
+    await WorkingMemoryStore.create(traceId)
+    const tools = buildTools(traceId, resetChatTimeout)
+
+    // 将 streamText 创建也放入 try，确保 SDK 同步抛错时同样释放信号和 WorkingMemory。
+    const result = streamText({
+      model,
+      system: buildSystemPrompt(mandatorySkillBodies),
+      messages: modelMessages,
+      tools,
+      stopWhen: isStepCount(7),
+      // 同时响应用户/断线取消和聊天流总超时。
+      abortSignal: combinedAbort.signal,
+    })
+
     // 运行时防御：校验 stream 是否为可迭代对象
     if (!result.stream || typeof result.stream[Symbol.asyncIterator] !== 'function') {
       throw new Error('模型未返回可迭代流')
     }
     streamLoop: for await (const part of result.stream as AsyncIterable<TextStreamPart<ToolSet>>) {
       if (session.disconnected) return
+      // 每个外层事件都代表上游仍在工作，避免长工具调用被固定总时长误判。
+      resetChatTimeout()
       switch (part.type) {
         case 'text-delta':
           postToPort(port, session, { type: 'chunk', delta: part.text })
@@ -352,38 +601,41 @@ export async function handleChatMessage(
           })
           break
         case 'tool-result': {
-          // 先推送附加 videos/insight 消息（3.2 §9.2 顺序：tool_start -> videos/insight -> tool_result）
+          // S-1 决策 A1：先推送 tool_result，再推送附加 videos/insight 消息。
+          // 顺序为 tool_start -> tool_result -> videos/insight -> done。
+          // A1 仅把完成消息排在辅助内容之前、收窄时序窗口；
+          // 不提供原子 UI 更新，浏览器实际 UX 仍待运行时/E2E 验证。
           const toolInput = toolInputs.get(part.toolCallId)
-          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput)
           toolInputs.delete(part.toolCallId)
-          // 再推送 tool_result
+          // 先推送 tool_result
           postToPort(port, session, {
             type: 'tool_result',
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             result: part.output,
           })
+          // 再推送附加 videos/insight 消息
+          // 传入 toolCallId 用于派生视频批次标识（S-3）
+          postToolAuxiliaryMessages(port, session, part.toolName, part.output, toolInput, part.toolCallId)
           break
         }
         case 'tool-error': {
-          const errorText = String(part.error)
-          const code = inferErrorCode(errorText)
-          // 含工具名上下文（4.2 SC-1）：直接使用 toolContextMessage 作为 message，
-          // 而非 friendlyMessage(code, ...)。因为 friendlyMessage 对已知 code 返回
-          // 固定文案会丢弃工具名上下文。
-          const toolContextMessage = `工具 ${part.toolName} 执行失败: ${errorText}`
+          // N-4：Bilibili 网络/业务错误走统一语义，普通工具错误保留工具名上下文。
+          const { code, message } = classifyToolError(part.toolName, part.error)
           postToPort(port, session, {
             type: 'error',
-            message: toolContextMessage,
+            message,
             code,
           })
           break streamLoop
         }
         case 'abort':
+          // 某些 AI SDK 实现以 abort 事件结束迭代，不一定抛出 AbortError。
+          reportTimeout()
           break streamLoop
         case 'error': {
           const errorText = String(part.error)
-          const code = inferErrorCode(errorText)
+          const code = inferErrorCode(part.error)
           postToPort(port, session, {
             type: 'error',
             message: friendlyMessage(code, errorText),
@@ -396,9 +648,12 @@ export async function handleChatMessage(
       }
     }
   } catch (err) {
-    if (!isAbortError(err)) {
+    if (session.abortReason === 'timeout') {
+      // 总超时需要反馈给用户；用户停止和 Port 断开仍保持静默取消行为。
+      reportTimeout()
+    } else if (!isAbortError(err)) {
       const message = err instanceof Error ? err.message : String(err)
-      const code = inferErrorCode(message)
+      const code = inferErrorCode(err)
       postToPort(port, session, {
         type: 'error',
         message: friendlyMessage(code, message),
@@ -406,6 +661,10 @@ export async function handleChatMessage(
       })
     }
   } finally {
+    // 先清理超时信号和监听器，再执行 release，避免 release 期间超时竞态（N-2）
+    clearTimeout(timeoutId)
+    timeoutSignal.removeEventListener('abort', handleTimeout)
+    combinedAbort.cleanup()
     // 会话结束清理 WorkingMemory（3.3 §2.1 末尾 / 3.7 §3.1 资源释放）
     // 失败静默，不阻断 done 推送
     try {
@@ -425,6 +684,7 @@ export function handlePing(port: chrome.runtime.Port, session: PortState): void 
 
 export function handleStop(session: PortSession): void {
   if (session.abortController) {
+    if (session.abortReason === null) session.abortReason = 'user'
     session.abortController.abort()
   }
 }
@@ -486,7 +746,7 @@ export async function handleGenerateTitle(
     if (session.disconnected) return
     // 超时/abort/网络错误等均回 error，由 CS 侧本地降级
     const message = err instanceof Error ? err.message : String(err)
-    const code = inferErrorCode(message)
+    const code = inferErrorCode(err)
     postToPort(port, session, {
       type: 'error',
       message: friendlyMessage(code, message),
@@ -547,7 +807,7 @@ export async function handleTestConnection(
     if (session.disconnected) return
     // 超时/abort/网络错误/鉴权失败等均回 ok:false + 友好错误信息
     const message = err instanceof Error ? err.message : String(err)
-    const code = inferErrorCode(message)
+    const code = inferErrorCode(err)
     postToPort(port, session, {
       type: 'connection_result',
       ok: false,
@@ -560,9 +820,14 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== portName) return
 
-    const session: PortSession = { disconnected: false, abortController: null }
+    const session: PortSession = {
+      disconnected: false,
+      abortController: null,
+      abortReason: null,
+    }
     port.onDisconnect.addListener(() => {
       session.disconnected = true
+      if (session.abortReason === null) session.abortReason = 'disconnect'
       if (session.abortController) {
         session.abortController.abort()
       }
@@ -575,7 +840,7 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleChatMessage(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            const code = inferErrorCode(message)
+            const code = inferErrorCode(err)
             postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
             postToPort(port, session, { type: 'done' })
           })
@@ -584,7 +849,7 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleGenerateTitle(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            const code = inferErrorCode(message)
+            const code = inferErrorCode(err)
             postToPort(port, session, { type: 'error', message: friendlyMessage(code, message), code })
           })
           break
@@ -592,7 +857,12 @@ export function setupPortListener(portName = 'bili-agent-chat'): void {
           void handleTestConnection(port, session, msg).catch((err) => {
             if (session.disconnected) return
             const message = err instanceof Error ? err.message : String(err)
-            postToPort(port, session, { type: 'connection_result', ok: false, error: message })
+            const code = inferErrorCode(err)
+            postToPort(port, session, {
+              type: 'connection_result',
+              ok: false,
+              error: friendlyMessage(code, message),
+            })
           })
           break
         case 'ping':

@@ -48,8 +48,54 @@ describe('isSWMessage', () => {
     expect(isSWMessage({ type: 'error', message: 'x', code: 123 })).toBe(false)
   })
 
-  it('requires boolean ok and optional string error for connection_result', () => {
-    expect(isSWMessage({ type: 'connection_result', ok: 'true' })).toBe(false)
+  // S-3：videos 消息的批次字段校验，采用向后兼容降级策略
+  describe('videos 批次字段校验（S-3）', () => {
+    it('接受携带 batchId 与 reranked 的完整批次消息', () => {
+      expect(
+        isSWMessage({
+          type: 'videos',
+          videos: [],
+          batchId: 'search_c1',
+          reranked: true,
+          rerankPending: false,
+        }),
+      ).toBe(true)
+    })
+
+    it('batchId 缺失时仍接受（向后兼容旧版本 SW 推送）', () => {
+      expect(isSWMessage({ type: 'videos', videos: [] })).toBe(true)
+    })
+
+    it('batchId 为空字符串时拒绝（存在但非法）', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: '' })).toBe(false)
+    })
+
+    it('batchId 类型非法时拒绝', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 123 })).toBe(false)
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: null })).toBe(false)
+    })
+
+    it('reranked 类型非法时拒绝', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 'b1', reranked: 'yes' })).toBe(
+        false,
+      )
+    })
+
+    it('reranked 缺省时接受', () => {
+      expect(isSWMessage({ type: 'videos', videos: [], batchId: 'b1' })).toBe(true)
+    })
+
+    it('rerankPending 必须是布尔值', () => {
+      expect(
+        isSWMessage({ type: 'videos', videos: [], batchId: 'b1', rerankPending: 'yes' }),
+      ).toBe(false)
+      expect(
+        isSWMessage({ type: 'videos', videos: [], batchId: 'b1', rerankPending: true }),
+      ).toBe(true)
+    })
+  })
+
+  it('requires boolean ok and optional string error for connection_result', () => {    expect(isSWMessage({ type: 'connection_result', ok: 'true' })).toBe(false)
     expect(isSWMessage({ type: 'connection_result', ok: 1 })).toBe(false)
     expect(isSWMessage({ type: 'connection_result', ok: true, error: 123 })).toBe(false)
     expect(isSWMessage({ type: 'connection_result' })).toBe(false)
@@ -117,12 +163,64 @@ describe('inferErrorCode', () => {
     expect(inferErrorCode(message)).toBe('429')
   })
 
-  it.each([
-    'timeout',
-    'fetch failed',
-    'unknown error',
-  ])('uses NETWORK_ERROR for unmatched failures: %s', (message) => {
+  it('uses NETWORK_ERROR for a generic fetch failure', () => {
+    const message = 'fetch failed'
     expect(inferErrorCode(message)).toBe('NETWORK_ERROR')
+  })
+
+  it('classifies timeout text separately from generic network failures', () => {
+    expect(inferErrorCode('Request timeout')).toBe('TIMEOUT_ERROR')
+  })
+
+  it('returns UNKNOWN_ERROR for an unrecognized error', () => {
+    expect(inferErrorCode('unknown error')).toBe('UNKNOWN_ERROR')
+  })
+
+  it.each([
+    [{ code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND api.example.com' }, 'DNS_ERROR'],
+    [{ code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 127.0.0.1:443' }, 'CONNECTION_REFUSED'],
+    [{ code: 'ECONNRESET', message: 'read ECONNRESET' }, 'CONNECTION_RESET'],
+    [{ code: 'ETIMEDOUT', message: 'connect ETIMEDOUT' }, 'TIMEOUT_ERROR'],
+    [{ code: 'EPROTO', message: 'protocol error' }, 'TLS_ERROR'],
+  ] as const)('classifies structured network errors: %s', (error, expected) => {
+    expect(inferErrorCode(error)).toBe(expected)
+  })
+
+  it('reads a network code from a fetch failed cause', () => {
+    expect(inferErrorCode({ message: 'fetch failed', cause: { code: 'ECONNREFUSED' } })).toBe(
+      'CONNECTION_REFUSED',
+    )
+  })
+
+  it('reads a network code through two cause levels', () => {
+    expect(
+      inferErrorCode({ message: 'fetch failed', cause: { cause: { code: 'ENOTFOUND' } } }),
+    ).toBe('DNS_ERROR')
+  })
+
+  it('does not inspect cause levels beyond the two-level limit', () => {
+    expect(
+      inferErrorCode({ message: 'fetch failed', cause: { cause: { cause: { code: 'ENOTFOUND' } } } }),
+    ).toBe('NETWORK_ERROR')
+  })
+
+  it('does not treat Bilibili business codes as HTTP statuses', () => {
+    expect(inferErrorCode('Bilibili error code: 14012')).toBe('UNKNOWN_ERROR')
+    expect(inferErrorCode('Bilibili risk code: -352')).toBe('UNKNOWN_ERROR')
+  })
+
+  it.each([
+    ['HTTP 404 Not Found', 'NOT_FOUND_ERROR'],
+    ['HTTP 500 Internal Server Error', 'SERVER_ERROR'],
+    [{ status: 408 }, 'TIMEOUT_ERROR'],
+  ] as const)('classifies HTTP failures: %s', (error, expected) => {
+    expect(inferErrorCode(error)).toBe(expected)
+  })
+
+  it('does not recurse forever through a cyclic cause', () => {
+    const error: { message: string; cause?: unknown } = { message: 'wrapped failure' }
+    error.cause = error
+    expect(inferErrorCode(error)).toBe('UNKNOWN_ERROR')
   })
 })
 
@@ -131,6 +229,16 @@ describe('friendlyMessage', () => {
     ['PROVIDER_NOT_CONFIGURED', undefined, '请到设置配置 AI 提供商'],
     ['401', undefined, 'API Key 无效，请检查设置'],
     ['429', undefined, '请求太频繁，请稍后重试'],
+    ['DNS_ERROR', undefined, '域名解析失败，请检查 Base URL 或网络'],
+    ['CONNECTION_REFUSED', undefined, '连接被拒绝，请检查 Base URL 或服务状态'],
+    ['CONNECTION_RESET', undefined, '连接被重置，请检查网络稳定性'],
+    ['TLS_ERROR', undefined, 'TLS 握手失败，请检查 Base URL 协议或证书'],
+    ['TIMEOUT_ERROR', undefined, '连接超时，请检查网络或稍后重试'],
+    ['NOT_FOUND_ERROR', undefined, '模型或接口不存在，请检查模型名或 Base URL'],
+    ['CLIENT_ERROR', undefined, '请求错误，请检查配置'],
+    ['SERVER_ERROR', undefined, '服务端异常，请稍后重试'],
+    ['PROVIDER_CONFIG_ERROR', undefined, 'Provider 配置无效，请检查 Base URL 或模型名'],
+    ['UNKNOWN_ERROR', undefined, '请求失败，请稍后重试'],
     ['NETWORK_ERROR', undefined, '网络连接失败'],
     ['TOOL_ROUND_LIMIT', undefined, '工具调用次数过多，请换个说法再试'],
     ['BILIBILI_RISK', undefined, '触发风控，请稍后再试或登录 B站'],

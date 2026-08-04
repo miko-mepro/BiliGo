@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/archive/2026-08/08-04-merge-bugfix-into-agentprompt/prd.md", "reason": "按验收条件审查合并结果"}
+{"file": ".trellis/spec/shared/git-conventions.md", "reason": "检查提交和状态验证"}
+{"file": ".trellis/spec/frontend/quality.md", "reason": "检查类型、Lint 与测试质量"}

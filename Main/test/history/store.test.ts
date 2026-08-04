@@ -109,6 +109,55 @@ describe('getHistoryIndex', () => {
     const result = await getHistoryIndex();
     expect(result).toEqual([]);
   });
+
+  // R-1：本地读取入口必须经过 sanitizeHistoryIndex 校验，
+  // 非字符串 title 不得原样流向渲染层（会在 toLowerCase 处抛 TypeError）
+  describe('数据入口校验（R-1）', () => {
+    it('title 为 null 时降级为空字符串', async () => {
+      const store = createBackingStore();
+      store[INDEX_KEY] = [
+        { id: 'c1', title: null, titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 3 },
+      ];
+      const result = await getHistoryIndex();
+      expect(result).toHaveLength(1);
+      expect(result[0].title).toBe('');
+      expect(() => result[0].title.toLowerCase()).not.toThrow();
+    });
+
+    it('id 非法的记录被丢弃，有效记录保留', async () => {
+      const store = createBackingStore();
+      store[INDEX_KEY] = [
+        { id: '', title: 'dropped', titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+        { id: 'c2', title: 'kept', titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+      ];
+      const result = await getHistoryIndex();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('c2');
+    });
+
+    it('数组内的非对象元素被丢弃', async () => {
+      const store = createBackingStore();
+      store[INDEX_KEY] = [
+        null,
+        'garbage',
+        { id: 'c1', title: 'ok', titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+      ];
+      const result = await getHistoryIndex();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('c1');
+    });
+
+    it('校验不回写存储（静默降级策略，避免写放大与并发冲突）', async () => {
+      const store = createBackingStore();
+      store[INDEX_KEY] = [
+        { id: 'c1', title: null, titleFinal: false, createdAt: 1, lastActiveAt: 2, messageCount: 0 },
+      ];
+      await getHistoryIndex();
+      expect(chrome.storage.local.set).not.toHaveBeenCalled();
+      // 存储中的原始脏数据保持不变
+      expect((store[INDEX_KEY] as Array<{ title: unknown }>)[0].title).toBeNull();
+    });
+  });
 });
 
 describe('writeHistoryIndex', () => {

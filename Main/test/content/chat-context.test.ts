@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   AgentStep,
   BilibiliVideoCard,
+  VideoBatch,
   SlangUnderstandResult,
   QueryExpandResult,
   RerankResult,
@@ -134,6 +135,16 @@ function rerank(overrides: Partial<RerankResult> = {}): RerankResult {
     trimmed: 0,
     ...overrides,
   }
+}
+
+/** 构造一个视频批次（S-3） */
+function makeBatch(
+  batchId: string,
+  videos: BilibiliVideoCard[],
+  anchorTimestamp: number,
+  reranked = false,
+): VideoBatch {
+  return { batchId, videos, anchorTimestamp, receivedAt: anchorTimestamp, reranked };
 }
 
 function clarification(
@@ -283,6 +294,59 @@ describe('reducer steps', () => {
       payload: { toolCallId: 's1', completedAt: FIXED_NOW },
     })
     expect(afterComplete).toBe(initial)
+  })
+})
+
+// ===== 过程文字自动归类（PROMOTE_STREAMING_TO_NOTE）=====
+// 工具调用前累积的流式正文应转为 note 步骤收进思维栏，并清空 streamingContent
+describe('reducer promote streaming to note', () => {
+  it('promotes accumulated streaming content into a note step and clears streaming', () => {
+    const initial = state({
+      messages: [message('user', '找视频'), message('assistant', '')],
+      streamingContent: '这个需求很明确，我直接搜索。',
+    })
+    const after = chatReducer(initial, { type: 'PROMOTE_STREAMING_TO_NOTE' })
+    const last = after.messages[after.messages.length - 1]
+    expect(last.steps).toHaveLength(1)
+    expect(last.steps![0].type).toBe('note')
+    expect(last.steps![0].summary).toBe('这个需求很明确，我直接搜索。')
+    expect(last.steps![0].status).toBe('completed')
+    expect(after.streamingContent).toBe('')
+  })
+
+  it('does nothing when streaming content is empty or whitespace', () => {
+    const initial = state({
+      messages: [message('assistant', '')],
+      streamingContent: '   ',
+    })
+    const after = chatReducer(initial, { type: 'PROMOTE_STREAMING_TO_NOTE' })
+    expect(after).toBe(initial)
+    const last = after.messages[after.messages.length - 1]
+    expect(last.steps).toBeUndefined()
+  })
+
+  it('does nothing when the last message is not assistant', () => {
+    const initial = state({
+      messages: [message('user', '问题')],
+      streamingContent: '有内容',
+    })
+    const after = chatReducer(initial, { type: 'PROMOTE_STREAMING_TO_NOTE' })
+    expect(after).toBe(initial)
+  })
+
+  it('appends note after existing tool_call steps preserving timeline order', () => {
+    const initial = state({
+      messages: [
+        assistantWithSteps([step('s1', { name: 'bilibili_search', status: 'completed' })]),
+      ],
+      streamingContent: '结果超过 3 条，我重排一下。',
+    })
+    const after = chatReducer(initial, { type: 'PROMOTE_STREAMING_TO_NOTE' })
+    const steps = after.messages[0].steps!
+    expect(steps).toHaveLength(2)
+    expect(steps[0].type).toBe('tool_call')
+    expect(steps[1].type).toBe('note')
+    expect(steps[1].summary).toBe('结果超过 3 条，我重排一下。')
   })
 })
 
@@ -694,5 +758,68 @@ describe('generateTempTitle', () => {
   it('falls back to 新对话 when first user content is empty', async () => {
     const { generateTempTitle } = await import('../../src/content/chat-context.js')
     expect(generateTempTitle([message('user', '   ')])).toBe('新对话')
+  })
+})
+
+// ===== 阶段4缺口3：UPSERT_VIDEO_BATCH 永久保留视频批次 =====
+describe('UPSERT_VIDEO_BATCH（阶段4缺口3）', () => {
+  it('第二次搜索追加新batch后第一次视频仍存在', () => {
+    // 第一次搜索产生 batch1
+    const initial = state({
+      videoBatches: [makeBatch('batch1', [video({ bvid: 'BV001', title: '第一次搜索' })], 1000)],
+    })
+    // 第二次搜索产生 batch2
+    const afterSecond = chatReducer(initial, {
+      type: 'UPSERT_VIDEO_BATCH',
+      payload: makeBatch('batch2', [video({ bvid: 'BV002', title: '第二次搜索' })], 2000),
+    })
+    // 断言：两个批次都存在
+    expect(afterSecond.videoBatches).toHaveLength(2)
+    expect(afterSecond.videoBatches[0].batchId).toBe('batch1')
+    expect(afterSecond.videoBatches[0].videos[0].title).toBe('第一次搜索')
+    expect(afterSecond.videoBatches[1].batchId).toBe('batch2')
+    expect(afterSecond.videoBatches[1].videos[0].title).toBe('第二次搜索')
+    // videos 派生镜像指向最新批次
+    expect(afterSecond.videos).toBe(afterSecond.videoBatches[1].videos)
+  })
+
+  it('同batch rerank更新不产生新batch', () => {
+    // 初始状态：batch1 有 3 个视频
+    const initial = state({
+      videoBatches: [
+        makeBatch(
+          'batch1',
+          [
+            video({ bvid: 'BV001', title: '视频A' }),
+            video({ bvid: 'BV002', title: '视频B' }),
+            video({ bvid: 'BV003', title: '视频C' }),
+          ],
+          1000,
+        ),
+      ],
+    })
+    // rerank 推送更新同一 batchId，视频顺序调整
+    const afterRerank = chatReducer(initial, {
+      type: 'UPSERT_VIDEO_BATCH',
+      payload: makeBatch(
+        'batch1',
+        [
+          video({ bvid: 'BV003', title: '视频C' }),
+          video({ bvid: 'BV001', title: '视频A' }),
+          video({ bvid: 'BV002', title: '视频B' }),
+        ],
+        1000, // 保持原锚点
+        true, // reranked=true
+      ),
+    })
+    // 断言：仍然只有一个批次
+    expect(afterRerank.videoBatches).toHaveLength(1)
+    expect(afterRerank.videoBatches[0].batchId).toBe('batch1')
+    // 顺序已更新
+    expect(afterRerank.videoBatches[0].videos[0].title).toBe('视频C')
+    expect(afterRerank.videoBatches[0].videos[1].title).toBe('视频A')
+    expect(afterRerank.videoBatches[0].videos[2].title).toBe('视频B')
+    // reranked 标记已置位
+    expect(afterRerank.videoBatches[0].reranked).toBe(true)
   })
 })

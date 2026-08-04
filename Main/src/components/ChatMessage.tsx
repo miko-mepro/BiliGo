@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
-import type { ChatMessage } from '../lib/shared-types/index.js'
+import React, { useState, useEffect } from 'react';
+import type { ChatMessage, AgentStep } from '../lib/shared-types/index.js'
 import type { AgentActivity } from '../content/chat-context.js'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import type { Components } from 'react-markdown'
 
 interface ChatMessageProps {
   message: ChatMessage;
@@ -8,6 +12,43 @@ interface ChatMessageProps {
   streamingContent?: string;
   streamingReasoning?: string;
   activity?: AgentActivity | null;
+}
+
+/**
+ * 工具名中文映射：思维栏时间线中把内部工具名显示为用户可读的中文标签。
+ * 未知工具名回退为原名。
+ */
+const TOOL_NAME_LABELS: Record<string, string> = {
+  slang_understand: '理解黑话',
+  query_expand: '扩展查询',
+  bilibili_search: '搜索视频',
+  video_rerank: '智能重排',
+  ask_clarification: '追问澄清',
+  load_skill: '加载技能',
+  read_skill_file: '读取技能资源',
+};
+
+function toolLabel(name: string): string {
+  return TOOL_NAME_LABELS[name] ?? name;
+}
+
+/**
+ * 把 reasoning + steps 时间线拼成折叠态预览用的纯文本。
+ * 顺序：原生 reasoning 在前，之后按 steps 顺序追加
+ * （note 取全文，tool_call 取中文标签），用空格连接成一段连续文本，
+ * CSS 只露出最后 1.5 行，实现"尾部预览"。
+ */
+function buildPreviewText(reasoning: string, steps: AgentStep[]): string {
+  const parts: string[] = [];
+  if (reasoning) parts.push(reasoning);
+  for (const step of steps) {
+    if (step.type === 'note') {
+      parts.push(step.summary);
+    } else {
+      parts.push(`⚙ ${toolLabel(step.name)}`);
+    }
+  }
+  return parts.join(' ');
 }
 
 export function ChatMessageItem({
@@ -22,10 +63,24 @@ export function ChatMessageItem({
 
   // For the last assistant message that's being streamed, show streaming content
   const displayContent = isStreaming && isAssistant ? streamingContent : message.content;
+
+  // 流式渲染 debounce 150ms，减少频繁重排；非流式直接用 displayContent
+  const [debouncedDisplay, setDebouncedDisplay] = useState(displayContent);
+  useEffect(() => {
+    if (!(isStreaming && isAssistant)) return;
+    const timer = setTimeout(() => {
+      setDebouncedDisplay(displayContent);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [displayContent, isStreaming, isAssistant]);
+  const effectiveDisplay = (isStreaming && isAssistant) ? debouncedDisplay : displayContent;
   const reasoning = isStreaming && isAssistant ? streamingReasoning : (message.reasoning ?? '');
   const steps = isAssistant ? (message.steps ?? []) : [];
   const isThinkingLive = isStreaming && isAssistant && activity?.kind === 'thinking' && reasoning.length > 0;
   const showRunning = isStreaming && isAssistant;
+  // 思维栏显示条件：有原生 reasoning 或有步骤时间线（note/tool_call）任一即显示
+  const hasThinking = isAssistant && (reasoning.length > 0 || steps.length > 0);
+  const previewText = hasThinking ? buildPreviewText(reasoning, steps) : '';
 
   return (
     <div
@@ -33,7 +88,7 @@ export function ChatMessageItem({
       data-role={message.role}
     >
       <div className="bili-agent-message__content">
-        {isAssistant && reasoning && (
+        {hasThinking && (
           <div className="bili-agent-thinking">
             <button
               type="button"
@@ -52,40 +107,80 @@ export function ChatMessageItem({
               </span>
               <span className="bili-agent-thinking__hint">{thinkingExpanded ? '收起' : '展开'}</span>
             </button>
+            {/* 折叠态：1.5 行尾部预览 + 顶部半透明渐变遮罩，点击可展开 */}
+            {!thinkingExpanded && previewText && (
+              <div
+                className="bili-agent-thinking__preview"
+                data-testid="thinking-preview"
+                role="button"
+                tabIndex={0}
+                onClick={() => setThinkingExpanded(true)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') setThinkingExpanded(true);
+                }}
+              >
+                <span className="bili-agent-thinking__preview-text">{previewText}</span>
+              </div>
+            )}
+            {/* 展开态：完整思考时间线（reasoning + note 段落 + 工具胶囊按时间顺序） */}
             {thinkingExpanded && (
               <div className="bili-agent-thinking__body" data-testid="thinking-body">
-                {reasoning}
+                {reasoning && (
+                  <div className="bili-agent-thinking__reasoning">{reasoning}</div>
+                )}
+                {steps.map((step, index) =>
+                  step.type === 'note' ? (
+                    <div
+                      key={`${step.timestamp}-${index}`}
+                      className="bili-agent-thinking__note"
+                    >
+                      {step.summary}
+                    </div>
+                  ) : (
+                    <div
+                      key={`${step.timestamp}-${index}`}
+                      className={`bili-agent-thinking__step${step.status === 'running' ? ' bili-agent-thinking__step--running' : ''}`}
+                    >
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                      </svg>
+                      <span>{toolLabel(step.name)}</span>
+                      {step.status === 'running' && (
+                        <span className="bili-agent-thinking__step-status">进行中…</span>
+                      )}
+                    </div>
+                  ),
+                )}
               </div>
             )}
           </div>
         )}
 
-        {steps.length > 0 && (
-          <div className="bili-agent-message__steps">
-            {steps.map((step, index) => (
-              <div key={`${step.timestamp}-${index}`} className="bili-agent-message__step">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="11" cy="11" r="8" />
-                  <path d="m21 21-4.35-4.35" />
-                </svg>
-                <span>{step.summary}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
         {displayContent && (
           <div className="bili-agent-message__bubble">
-            <p className="bili-agent-message__text">{displayContent}</p>
+            {isAssistant ? (
+              <div className="bili-agent-message__markdown">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+                  components={MARKDOWN_COMPONENTS}
+                >
+                  {effectiveDisplay}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <p className="bili-agent-message__text">{displayContent}</p>
+            )}
           </div>
         )}
 
@@ -118,10 +213,29 @@ function activityLabel(activity: AgentActivity | null): string {
     case 'thinking':
       return '正在思考…';
     case 'tool':
-      return activity.label ? `正在${activity.label}…` : '正在调用工具…';
+      return activity.label ? `正在${toolLabel(activity.label)}…` : '正在调用工具…';
     case 'responding':
       return '正在回复…';
   }
+}
+
+// rehype-sanitize 自定义配置：仅允许 http/https 链接
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ['http', 'https'],
+  },
+}
+
+// 自定义 Markdown 组件：安全约束
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  img: () => null,
 }
 
 function formatTime(timestamp: number): string {

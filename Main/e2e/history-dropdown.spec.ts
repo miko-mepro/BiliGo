@@ -25,7 +25,8 @@
  */
 
 import type { BrowserContext } from "@playwright/test";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
+import { test } from "./fixtures/extension-fixture.js";
 import type { SeedSettings } from "./fixtures/chrome-mock.js";
 import {
 	openBilibiliWithMockedExtension,
@@ -44,7 +45,7 @@ const HISTORY_INDEX_KEY = "bili-agent-history-index";
  */
 interface SeedHistoryRecord {
 	id: string;
-	title: string;
+	title: unknown;
 	titleFinal: boolean;
 	createdAt: number;
 	lastActiveAt: number;
@@ -188,6 +189,41 @@ test.describe("BiliGo history dropdown", () => {
 		// seed-conv-1 的 lastActiveAt 更晚（now-30_000），应排在第一位
 		await expect(historyItems.nth(0)).toContainText("测试对话一");
 		await expect(historyItems.nth(1)).toContainText("测试对话二");
+	});
+
+	test("does not render an error boundary for a non-string history title", async ({
+		page,
+	}) => {
+		const now = Date.now();
+		await openBilibiliWithMockedExtension(page, {
+			settings: minimalSeedSettings(),
+		});
+
+		// 写入真实 storage 的异常标题，覆盖 R-1 的遗留数据入口。
+		await seedHistoryIndex(page.context(), [
+			{
+				id: "seed-conv-dirty-title",
+				title: {},
+				titleFinal: true,
+				createdAt: now - 60_000,
+				lastActiveAt: now - 30_000,
+				messageCount: 1,
+			},
+		]);
+
+		const panel = await openPanel(page);
+		await panel.locator('[aria-label="展开历史记录"]').click();
+
+		const dropdown = panel.locator(".bili-agent-history-dropdown");
+		const historyItems = dropdown.locator(".bili-agent-history-item");
+		await expect(historyItems).toHaveCount(1, { timeout: 5000 });
+
+		// 输入搜索词，覆盖原先 r.title.toLowerCase() 的崩溃分支。
+		await dropdown.getByRole("textbox", { name: "搜索历史记录" }).fill("脏数据");
+		await expect(dropdown.locator(".bili-agent-history-empty")).toContainText(
+			"暂无历史记录",
+		);
+		await expect(page.getByText("BiliAgent 渲染异常")).toHaveCount(0);
 	});
 
 	test("deletes a single record when delete button clicked", async ({

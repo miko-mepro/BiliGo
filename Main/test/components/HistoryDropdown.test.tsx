@@ -1,6 +1,6 @@
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
 import { HistoryDropdown } from '../../src/components/HistoryDropdown.js'
 import type { ConversationRecord } from '../../src/lib/shared-types/index.js'
 
@@ -95,7 +95,44 @@ describe('HistoryDropdown', () => {
     const input = await screen.findByDisplayValue('原名')
     fireEvent.change(input, { target: { value: '新名' } })
     fireEvent.keyDown(input, { key: 'Enter' })
-    await waitFor(() => expect(props.onRename).toHaveBeenCalledWith('c1', '新名'))
+    await waitFor(() => {
+      expect(props.onRename).toHaveBeenCalledWith('c1', '新名')
+      expect(screen.getByText('新名')).toBeInTheDocument()
+    })
+  })
+
+  it('unmounted rename ignores a later rejection', async () => {
+    let rejectRename: ((reason: Error) => void) | undefined
+    const onRename = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRename = reject
+        }),
+    )
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const records = [makeRecord({ id: 'c1', title: '待重命名' })]
+    const props = {
+      ...defaultProps,
+      getIndex: vi.fn(() => Promise.resolve(records)),
+      onRename,
+    }
+    const { unmount } = render(<HistoryDropdown {...props} />)
+    await waitFor(() => expect(screen.getByText('待重命名')).toBeInTheDocument())
+
+    fireEvent.doubleClick(screen.getByText('待重命名'))
+    const input = await screen.findByDisplayValue('待重命名')
+    fireEvent.change(input, { target: { value: '新标题' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onRename).toHaveBeenCalledWith('c1', '新标题')
+
+    unmount()
+    await act(async () => {
+      rejectRename?.(new Error('rename failed'))
+      await Promise.resolve()
+    })
+
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('filters records by search query', async () => {
@@ -120,5 +157,97 @@ describe('HistoryDropdown', () => {
     const clearBtn = screen.getByText('清空全部历史')
     fireEvent.click(clearBtn)
     await waitFor(() => expect(props.onClearAll).toHaveBeenCalledTimes(1))
+  })
+
+  // R-1 渲染层兜底：即使脏数据绕过上游 sanitizeHistoryIndex 校验直接进入 records，
+  // 搜索过滤也不得因 r.title.toLowerCase() 抛出 TypeError 而触发错误边界
+  describe('搜索过滤的非字符串 title 防御（R-1）', () => {
+    // 绕过 ConversationRecord 类型约束模拟运行时脏数据
+    function makeDirtyRecord(id: string, title: unknown): ConversationRecord {
+      return { ...makeRecord({ id }), title } as unknown as ConversationRecord
+    }
+
+    it.each([
+      ['null', null],
+      ['数字', 123],
+      ['对象', {}],
+      ['undefined', undefined],
+      ['布尔值', true],
+    ])('title 为 %s 时输入搜索关键词不抛 TypeError，该记录被过滤', async (_label, title) => {
+      const records = [makeDirtyRecord('c1', title), makeRecord({ id: 'c2', title: '正常标题' })]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('正常标题')).toBeInTheDocument())
+
+      const search = screen.getByLabelText('搜索历史记录')
+      // 输入非空字符会进入 records.filter 分支，是原崩溃链路的触发点
+      expect(() => fireEvent.change(search, { target: { value: 'x' } })).not.toThrow()
+      // 未触发错误边界降级 UI，说明 render 未抛错
+      expect(screen.queryByText(/渲染异常/)).not.toBeInTheDocument()
+    })
+
+    it('title 字段缺失时不抛错', async () => {
+      const noTitle = { ...makeRecord({ id: 'c1' }) } as Partial<ConversationRecord>
+      delete noTitle.title
+      const props = {
+        ...defaultProps,
+        getIndex: vi.fn(() => Promise.resolve([noTitle as ConversationRecord])),
+      }
+      render(<HistoryDropdown {...props} />)
+      const search = await screen.findByLabelText('搜索历史记录')
+      expect(() => fireEvent.change(search, { target: { value: 'x' } })).not.toThrow()
+    })
+
+    it('混合记录搜索时只匹配合法 title，脏数据记录被排除', async () => {
+      const records = [
+        makeRecord({ id: 'c1', title: 'ok' }),
+        makeDirtyRecord('c2', null),
+      ]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('ok')).toBeInTheDocument())
+
+      const search = screen.getByLabelText('搜索历史记录')
+      fireEvent.change(search, { target: { value: 'ok' } })
+      expect(screen.getByText('ok')).toBeInTheDocument()
+    })
+
+    it('搜索框为空时脏数据记录仍可展示（不走 filter 分支）', async () => {
+      const records = [makeDirtyRecord('c1', null), makeRecord({ id: 'c2', title: '正常标题' })]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('正常标题')).toBeInTheDocument())
+      expect(screen.queryByText(/渲染异常/)).not.toBeInTheDocument()
+    })
+
+    it('搜索词为纯空白时不进入过滤分支，全部记录保留', async () => {
+      const records = [makeDirtyRecord('c1', null), makeRecord({ id: 'c2', title: '正常标题' })]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('正常标题')).toBeInTheDocument())
+
+      const search = screen.getByLabelText('搜索历史记录')
+      expect(() => fireEvent.change(search, { target: { value: '   ' } })).not.toThrow()
+      expect(screen.getByText('正常标题')).toBeInTheDocument()
+    })
+
+    // 第二条崩溃路径：对象类型 title 会被当作 React child 渲染，
+    // 打开下拉即抛 "Objects are not valid as a React child"，无需输入搜索词。
+    // 修复方案原文只分析了 toLowerCase 路径，此用例锁定该补充路径不回归。
+    it('title 为对象时仅打开下拉（不搜索）也不触发渲染崩溃', async () => {
+      const records = [makeDirtyRecord('c1', {}), makeRecord({ id: 'c2', title: '正常标题' })]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('正常标题')).toBeInTheDocument())
+      expect(screen.queryByText(/渲染异常/)).not.toBeInTheDocument()
+    })
+
+    it('title 为数组时仅打开下拉也不触发渲染崩溃', async () => {
+      const records = [makeDirtyRecord('c1', ['x']), makeRecord({ id: 'c2', title: '正常标题' })]
+      const props = { ...defaultProps, getIndex: vi.fn(() => Promise.resolve(records)) }
+      render(<HistoryDropdown {...props} />)
+      await waitFor(() => expect(screen.getByText('正常标题')).toBeInTheDocument())
+      expect(screen.queryByText(/渲染异常/)).not.toBeInTheDocument()
+    })
   })
 })

@@ -831,6 +831,127 @@ const css = `
     line-height: 1.6;
   }
 
+  /* Markdown 渲染样式 — 仅 AI 消息使用 */
+  .bili-agent-message__markdown {
+    font-size: 14px;
+    line-height: 1.7;
+    word-wrap: break-word;
+    white-space: normal;
+  }
+
+  .bili-agent-message__markdown p {
+    margin: 0 0 8px;
+  }
+
+  .bili-agent-message__markdown p:last-child {
+    margin-bottom: 0;
+  }
+
+  .bili-agent-message__markdown h1,
+  .bili-agent-message__markdown h2,
+  .bili-agent-message__markdown h3,
+  .bili-agent-message__markdown h4,
+  .bili-agent-message__markdown h5,
+  .bili-agent-message__markdown h6 {
+    margin: 12px 0 6px;
+    font-weight: 600;
+    color: var(--bili-text-primary);
+    line-height: 1.4;
+  }
+
+  .bili-agent-message__markdown h1 { font-size: 18px; }
+  .bili-agent-message__markdown h2 { font-size: 16px; }
+  .bili-agent-message__markdown h3 { font-size: 15px; }
+  .bili-agent-message__markdown h4 { font-size: 14px; }
+  .bili-agent-message__markdown h5,
+  .bili-agent-message__markdown h6 { font-size: 13px; }
+
+  .bili-agent-message__markdown ul,
+  .bili-agent-message__markdown ol {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+  }
+
+  .bili-agent-message__markdown li {
+    margin: 2px 0;
+  }
+
+  .bili-agent-message__markdown code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 13px;
+    background-color: var(--bili-bg-step);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--bili-text-primary);
+  }
+
+  .bili-agent-message__markdown pre {
+    margin: 8px 0;
+    padding: 12px;
+    background-color: var(--bili-bg-step);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+
+  .bili-agent-message__markdown pre code {
+    padding: 0;
+    background: none;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .bili-agent-message__markdown blockquote {
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-left: 3px solid var(--bili-pink);
+    color: var(--bili-text-secondary);
+    background-color: var(--bili-bg-think);
+    border-radius: 0 6px 6px 0;
+  }
+
+  .bili-agent-message__markdown table {
+    width: 100%;
+    margin: 8px 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .bili-agent-message__markdown th,
+  .bili-agent-message__markdown td {
+    padding: 6px 10px;
+    border: 1px solid var(--bili-border);
+    text-align: left;
+  }
+
+  .bili-agent-message__markdown th {
+    background-color: var(--bili-bg-step);
+    font-weight: 600;
+    color: var(--bili-text-primary);
+  }
+
+  .bili-agent-message__markdown td {
+    color: var(--bili-text-secondary);
+  }
+
+  .bili-agent-message__markdown a {
+    color: var(--bili-blue);
+    text-decoration: none;
+  }
+
+  .bili-agent-message__markdown a:hover {
+    text-decoration: underline;
+  }
+
+  .bili-agent-message__markdown hr {
+    margin: 12px 0;
+    border: none;
+    border-top: 1px solid var(--bili-border);
+  }
+
+  .bili-agent-message__markdown del {
+    color: var(--bili-text-muted);
+  }
+
   .bili-agent-message__time {
     font-size: 11px;
     color: var(--bili-text-muted);
@@ -905,6 +1026,81 @@ const css = `
     word-break: break-word;
     max-height: 240px;
     overflow-y: auto;
+  }
+
+  /* 折叠态 1.5 行尾部预览：固定高度约 1.5 行（12px × 1.7 × 1.5 ≈ 30px），
+     内容底部对齐只露出最后 1.5 行，顶部盖半透明渐变遮罩暗示"上面还有内容" */
+  .bili-agent-thinking__preview {
+    position: relative;
+    height: 30px;
+    padding: 0 12px 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    cursor: pointer;
+    border-top: 1px dashed var(--bili-border);
+  }
+
+  .bili-agent-thinking__preview-text {
+    color: var(--bili-text-muted);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* 顶部半透明渐变遮罩：从思维栏背景色渐变到透明，深浅色模式随 CSS 变量自动适配 */
+  .bili-agent-thinking__preview::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: linear-gradient(var(--bili-bg-think), transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* 展开态时间线：过程文字段落（note 步骤） */
+  .bili-agent-thinking__reasoning,
+  .bili-agent-thinking__note {
+    color: var(--bili-text-muted);
+    font-size: 12px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .bili-agent-thinking__note + .bili-agent-thinking__note,
+  .bili-agent-thinking__reasoning + .bili-agent-thinking__note {
+    margin-top: 6px;
+  }
+
+  /* 展开态时间线：工具调用胶囊（从正文区迁移进思维栏，复用步骤胶囊配色） */
+  .bili-agent-thinking__step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    max-width: 100%;
+    margin: 6px 0;
+    padding: 4px 10px;
+    border-radius: 10px;
+    background-color: var(--bili-bg-step);
+    color: var(--bili-text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .bili-agent-thinking__step--running {
+    animation: bili-agent-fade-pulse 1.2s ease-in-out infinite;
+  }
+
+  .bili-agent-thinking__step-status {
+    color: var(--bili-text-muted);
+    font-size: 11px;
   }
 
   /* Tool Activity Steps */

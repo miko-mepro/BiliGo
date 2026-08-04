@@ -17,6 +17,7 @@ import { saveConversation, getHistoryIndex } from './store.js'
 import type {
   ChatMessage,
   BilibiliVideoCard,
+  VideoBatch,
   SlangUnderstandResult,
   QueryExpandResult,
   RerankResult,
@@ -96,6 +97,9 @@ export function buildStoredConversationPayload(
     conversationId: state.conversationId,
     messages,
     videos: state.videos,
+    // 持久化全部批次（S-3）：刷新后恢复时旧视频仍挂在旧输出下。
+    // 同时保留扁平 videos 字段，使降级到旧版本代码时仍能读到当前视频。
+    videoBatches: state.videoBatches,
     understandings: state.understandings,
     expansions: state.expansions,
     reranks: state.reranks,
@@ -109,6 +113,8 @@ export interface PersistedConversationCache {
   conversationId: string
   messages: ChatMessage[]
   videos: BilibiliVideoCard[]
+  /** 视频批次（S-3）：可选，兼容尚未写入批次的旧缓存 */
+  videoBatches?: VideoBatch[]
   understandings: Array<SlangUnderstandResult & { receivedAt: number }>
   expansions: Array<QueryExpandResult & { receivedAt: number }>
   reranks: Array<RerankResult & { receivedAt: number }>
@@ -155,6 +161,8 @@ export function buildMigrationPayload(
     conversationId: state.conversationId,
     messages: state.messages,
     videos: state.videos ?? [],
+    // 迁移时一并带上批次（S-3），避免首次启用历史时丢失批次归属
+    videoBatches: state.videoBatches ?? [],
     understandings: state.understandings ?? [],
     expansions: state.expansions ?? [],
     reranks: state.reranks ?? [],
@@ -167,6 +175,8 @@ export interface MigrationPayload {
   conversationId: string
   messages: ChatMessage[]
   videos: BilibiliVideoCard[]
+  /** 视频批次（S-3） */
+  videoBatches?: VideoBatch[]
   understandings: Array<SlangUnderstandResult & { receivedAt: number }>
   expansions: Array<QueryExpandResult & { receivedAt: number }>
   reranks: Array<RerankResult & { receivedAt: number }>
@@ -196,6 +206,10 @@ export function useConversationSaver(
     hydrated,
     state.messages,
     state.videos,
+    // 依赖批次数组（S-3）：videos 是最新批次的派生镜像，
+    // 仅当最新批次内容变化时才变引用；批次结构本身的变化（如新增批次、
+    // 旧批次被 rerank 更新）必须单独依赖 videoBatches 才能触发持久化。
+    state.videoBatches,
     state.understandings,
     state.expansions,
     state.reranks,
@@ -234,6 +248,7 @@ export function useConversationSaver(
             conversationId: migration.conversationId,
             messages: migration.messages,
             videos: migration.videos,
+            videoBatches: migration.videoBatches,
             understandings: migration.understandings,
             expansions: migration.expansions,
             reranks: migration.reranks,

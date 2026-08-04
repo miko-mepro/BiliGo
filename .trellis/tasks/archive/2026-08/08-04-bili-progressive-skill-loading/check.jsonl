@@ -1,0 +1,8 @@
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/prd.md","reason":"Check every acceptance criterion and scope boundary against the implementation."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/design.md","reason":"Check data flow, browser-extension packaging, cache lifecycle, tool boundaries, and rollback assumptions."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/implement.md","reason":"Check validation coverage, ordered work, risky files, and required commands."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/research/skill-loading-research.md","reason":"Check portability claims and Agent Skills progressive-disclosure behavior against the implementation."}
+{"file":".trellis/spec/shared/code-quality.md","reason":"Review type safety, error handling, naming, lint, and test quality."}
+{"file":".trellis/spec/shared/typescript.md","reason":"Review Zod schemas, explicit return types, imports, and discriminated result types."}
+{"file":".trellis/spec/frontend/quality.md","reason":"Review React/Vite quality, bundle behavior, error handling, and regression checks."}
+{"file":".trellis/spec/frontend/react-pitfalls.md","reason":"Review any ChatMessage/UI timeline changes for React state and rendering regressions."}

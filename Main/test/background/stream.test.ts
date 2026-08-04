@@ -39,7 +39,10 @@ const toolMocks = vi.hoisted(() => ({
   createSlangUnderstandTool: vi.fn(() => ({ __kind: 'slang_understand' })),
   createQueryExpandTool: vi.fn(() => ({ __kind: 'query_expand' })),
   createBilibiliSearchTool: vi.fn(() => ({ __kind: 'bilibili_search' })),
-  createVideoRerankTool: vi.fn(() => ({ __kind: 'video_rerank' })),
+  createVideoRerankTool: vi.fn((deps: { onActivity?: () => void }) => ({
+    __kind: 'video_rerank',
+    onActivity: deps.onActivity,
+  })),
   askClarification: vi.fn(),
   WorkingMemoryStore: {
     create: vi.fn(() => Promise.resolve({ traceId: 'test-trace' })),
@@ -49,6 +52,34 @@ const toolMocks = vi.hoisted(() => ({
   },
   analyzeCovers: vi.fn(),
 }))
+
+const skillMocks = vi.hoisted(() => ({
+  listSkillMetadata: vi.fn(() => [
+    {
+      name: 'bili-writing-format',
+      description: '规范 BiliGo 最终回复格式',
+      activation: 'mandatory',
+      resources: ['references/video-reply.md', 'references/clarification.md'],
+    },
+    {
+      name: 'optional-research',
+      description: '按需提供研究辅助',
+      activation: 'autonomous',
+      resources: ['references/research.md'],
+    },
+  ]),
+  getMandatorySkillBodies: vi.fn(() => ['mandatory writing rules']),
+  loadSkillBody: vi.fn((name: string) => ({
+    success: true,
+    data: name === 'optional-research' ? 'autonomous skill body' : 'loaded skill body',
+  })),
+  readSkillResource: vi.fn((skill: string, path: string) => ({
+    success: true,
+    data: `${skill}:${path} resource body`,
+  })),
+}))
+
+vi.mock('../../src/skills/registry.js', () => skillMocks)
 
 vi.mock('../../src/tools/slang-understand.js', () => ({
   createSlangUnderstandTool: toolMocks.createSlangUnderstandTool,
@@ -79,7 +110,10 @@ import {
   handleStop,
   handleTestConnection,
   postToPort,
+  CHAT_STREAM_TIMEOUT_MS,
+  setupPortListener,
   type PortSession,
+  resetMandatorySkillCache,
 } from '../../src/background/stream.js'
 import type { CSMessage, SWMessage } from '../../src/background/port-protocol.js'
 import type { ProviderConfig } from '../../src/lib/shared-types/provider.js'
@@ -99,10 +133,10 @@ function createPort(name = 'bili-agent-chat') {
 }
 
 function createSession(overrides: Partial<PortSession> = {}): PortSession {
-  return { disconnected: false, abortController: null, ...overrides }
+  return { disconnected: false, abortController: null, abortReason: null, ...overrides }
 }
 
-function streamOf(...parts: any[]): AsyncIterable<any> {
+function streamOf(...parts: unknown[]): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const p of parts) yield p
@@ -111,10 +145,10 @@ function streamOf(...parts: any[]): AsyncIterable<any> {
 }
 
 function throwingStream(
-  parts: any[],
+  parts: unknown[],
   errorAt: number,
   err: unknown,
-): AsyncIterable<any> {
+): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (let i = 0; i < parts.length; i++) {
@@ -147,6 +181,81 @@ function deferredStream(options: { onAbort?: () => boolean } = {}) {
   }
 }
 
+function streamUntilAbort(signal: AbortSignal): AsyncIterable<any> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield textDelta('开始')
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
+    },
+  }
+}
+
+function streamWithoutOutputUntilAbort(signal: AbortSignal): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
+      // Promise 只会因 abort 结束；展开空序列保证异步生成器不产生任何事件。
+      yield* []
+    },
+  }
+}
+
+function delayedSecondStream(signal: AbortSignal) {
+  let releaseSecond!: () => void
+  const secondReady = new Promise<void>((resolve) => {
+    releaseSecond = resolve
+  })
+  return {
+    stream: {
+      async *[Symbol.asyncIterator]() {
+        yield textDelta('第一次输出')
+        await secondReady
+        if (signal.aborted) {
+          throw new DOMException('aborted', 'AbortError')
+        }
+        yield textDelta('第二次输出')
+        await new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(new DOMException('aborted', 'AbortError'))
+            return
+          }
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true },
+          )
+        })
+      },
+    },
+    releaseSecond,
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  // fake timers 下只推进异步生成器的 Promise 队列，不额外推进超时计时器。
+  for (let i = 0; i < 5; i += 1) await Promise.resolve()
+}
+
 function makeProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
   return {
     id: 'openai',
@@ -163,8 +272,9 @@ function makeProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
 
 function makeChatMsg(
   messages: ChatMessage[] = [],
+  conversationId = 'conv_test_1',
 ): Extract<CSMessage, { type: 'chat' }> {
-  return { type: 'chat', messages, conversationId: 'conv_test_1' }
+  return { type: 'chat', messages, conversationId }
 }
 
 function textDelta(text: string) {
@@ -211,6 +321,7 @@ function setupStreamResult(stream: AsyncIterable<any>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetMandatorySkillCache()
 })
 
 describe('stream mapping', () => {
@@ -356,16 +467,172 @@ describe('termination', () => {
     })
     expect(session.abortController).not.toBeNull()
     handleStop(session)
+    expect(session.abortReason).toBe('user')
     expect(session.abortController!.signal.aborted).toBe(true)
     deferred.resolve()
     await promise
     expect(posted.some((m) => m.type === 'error')).toBe(false)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
+
+  it('reports a readable timeout error when the chat stream stalls', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '开始' })
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+      await promise
+
+      expect(session.abortReason).toBe('timeout')
+      expect(posted).toContainEqual({
+        type: 'error',
+        code: 'TIMEOUT',
+        message: '聊天流请求超时，请稍后重试',
+      })
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports timeout when the stream never emits any output', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamWithoutOutputUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+      await promise
+
+      expect(session.abortReason).toBe('timeout')
+      expect(posted).toContainEqual({ type: 'error', code: 'TIMEOUT', message: '聊天流请求超时，请稍后重试' })
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('allows a second output after nearly 45 seconds when activity resets the idle timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      let delayed: ReturnType<typeof delayedSecondStream> | undefined
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => {
+        delayed = delayedSecondStream(abortSignal)
+        return delayed
+      })
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '第一次输出' })
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS - 100)
+      delayed!.releaseSecond()
+      await flushMicrotasks()
+      expect(posted).toContainEqual({ type: 'chunk', delta: '第二次输出' })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+
+      handleStop(session)
+      await promise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes the outer timeout from rerank internal activity without posting internal text', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '开始' })
+      })
+      const rerankOptions = toolMocks.createVideoRerankTool.mock.calls[0][0] as {
+        onActivity?: () => void
+      }
+      expect(rerankOptions.onActivity).toBeTypeOf('function')
+
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS - 1_000)
+      rerankOptions.onActivity!()
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+      expect(posted.some((message) => message.type === 'reasoning')).toBe(false)
+
+      handleStop(session)
+      await promise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not report a timeout when the stream completes normally', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      setupStreamResult(streamOf(textDelta('完成')))
+
+      await handleChatMessage(port, session, makeChatMsg())
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cleans up when streamText throws before returning a stream', async () => {
+    setupValidProvider()
+    aiMocks.streamText.mockImplementation(() => {
+      throw new Error('stream setup failed')
+    })
+    const { port, posted } = createPort()
+    const session = createSession()
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'UNKNOWN_ERROR',
+      message: '请求失败，请稍后重试',
+    })
+    expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
 })
 
 describe('step limit', () => {
-  it('passes isStepCount(5) to streamText', async () => {
+  it('passes isStepCount(7) to streamText', async () => {
     setupValidProvider()
     const sentinel = () => false
     aiMocks.isStepCount.mockReturnValue(sentinel)
@@ -373,12 +640,12 @@ describe('step limit', () => {
     const session = createSession()
     setupStreamResult(streamOf(textDelta('a')))
     await handleChatMessage(port, session, makeChatMsg())
-    expect(aiMocks.isStepCount).toHaveBeenCalledWith(5)
+    expect(aiMocks.isStepCount).toHaveBeenCalledWith(7)
     expect(aiMocks.isStepCount).toHaveBeenCalledTimes(1)
     expect(aiMocks.streamText.mock.calls[0][0].stopWhen).toBe(sentinel)
   })
 
-  it('does not emit TOOL_ROUND_LIMIT when the fifth model step ends', async () => {
+  it('does not emit TOOL_ROUND_LIMIT when the seventh model step ends', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -399,7 +666,150 @@ describe('step limit', () => {
   })
 })
 
+describe('skill orchestration', () => {
+  it('preloads mandatory bodies before streamText and keeps autonomous content progressive', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const streamCallOrder = aiMocks.streamText.mock.invocationCallOrder[0]
+    const preloadCallOrder = skillMocks.getMandatorySkillBodies.mock.invocationCallOrder[0]
+    expect(preloadCallOrder).toBeLessThan(streamCallOrder)
+    const systemPrompt = aiMocks.streamText.mock.calls[0][0].system as string
+    expect(systemPrompt).toContain('optional-research')
+    expect(systemPrompt).toContain('按需提供研究辅助')
+    expect(systemPrompt).toContain('mandatory writing rules')
+    expect(systemPrompt).not.toContain('autonomous skill body')
+    expect(systemPrompt).not.toContain('resource body')
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('reuses mandatory bodies by conversation ID while rebuilding each request prompt', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(skillMocks.getMandatorySkillBodies).toHaveBeenCalledTimes(1)
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(2)
+    const firstPrompt = aiMocks.streamText.mock.calls[0][0].system as string
+    const secondPrompt = aiMocks.streamText.mock.calls[1][0].system as string
+    expect(firstPrompt).toContain('mandatory writing rules')
+    expect(secondPrompt).toContain('mandatory writing rules')
+    expect(firstPrompt).toContain('optional-research')
+    expect(secondPrompt).toContain('optional-research')
+    expect(posted.filter((message) => message.type === 'done')).toHaveLength(2)
+  })
+
+  it('does not share mandatory bodies between different conversation IDs', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg([], 'conv_test_a'))
+    await handleChatMessage(port, session, makeChatMsg([], 'conv_test_b'))
+
+    expect(skillMocks.getMandatorySkillBodies).toHaveBeenCalledTimes(2)
+    expect(posted.filter((message) => message.type === 'done')).toHaveLength(2)
+  })
+
+  it('returns registry values from skill tools without adding auxiliary UI messages', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolCall('call_skill', 'load_skill', { name: 'optional-research' }),
+        toolResult('call_skill', 'load_skill', {
+          success: true,
+          data: 'autonomous skill body',
+        }),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const toolsArg = aiMocks.streamText.mock.calls[0][0].tools
+    await expect(
+      toolsArg.load_skill.execute({ name: 'optional-research' }),
+    ).resolves.toEqual({ success: true, data: 'autonomous skill body' })
+    await expect(
+      toolsArg.read_skill_file.execute({
+        skill: 'bili-writing-format',
+        path: 'references/video-reply.md',
+      }),
+    ).resolves.toEqual({
+      success: true,
+      data: 'bili-writing-format:references/video-reply.md resource body',
+    })
+    expect(posted.some((message) => message.type === 'videos')).toBe(false)
+    expect(posted.some((message) => message.type === 'insight')).toBe(false)
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_skill',
+      toolName: 'load_skill',
+      result: { success: true, data: 'autonomous skill body' },
+    })
+  })
+
+  it('passes structured registry errors through skill tools', async () => {
+    setupValidProvider()
+    skillMocks.loadSkillBody.mockReturnValueOnce({
+      success: false,
+      code: 'SKILL_NOT_FOUND',
+      error: '技能不存在',
+    })
+    skillMocks.readSkillResource.mockReturnValueOnce({
+      success: false,
+      code: 'RESOURCE_PATH_TRAVERSAL',
+      error: '资源路径不允许',
+    })
+    const { port } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const toolsArg = aiMocks.streamText.mock.calls[0][0].tools
+    await expect(
+      toolsArg.load_skill.execute({ name: 'missing-skill' }),
+    ).resolves.toEqual({
+      success: false,
+      code: 'SKILL_NOT_FOUND',
+      error: '技能不存在',
+    })
+    await expect(
+      toolsArg.read_skill_file.execute({ skill: 'bili-writing-format', path: '../SKILL.md' }),
+    ).resolves.toEqual({
+      success: false,
+      code: 'RESOURCE_PATH_TRAVERSAL',
+      error: '资源路径不允许',
+    })
+  })
+})
+
 describe('disconnect', () => {
+  it('swallows synchronous postMessage failures and marks the session disconnected', () => {
+    const session = createSession()
+    const failingPort = {
+      postMessage: vi.fn(() => {
+        throw new Error('Extension context invalidated')
+      }),
+    } as unknown as chrome.runtime.Port
+
+    expect(() => postToPort(failingPort, session, { type: 'done' })).not.toThrow()
+    expect(session.disconnected).toBe(true)
+
+    postToPort(failingPort, session, { type: 'done' })
+    expect(failingPort.postMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('silently drops messages after port disconnect', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
@@ -417,6 +827,50 @@ describe('disconnect', () => {
     expect(chunks.length).toBe(1)
     expect(posted.some((m) => m.type === 'error')).toBe(false)
     expect(posted.some((m) => m.type === 'done')).toBe(false)
+  })
+
+  it('marks a real Port disconnect as silent cancellation', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    let onMessage: (message: unknown) => void = () => undefined
+    let onDisconnect: () => void = () => undefined
+    const listenerPort = {
+      ...port,
+      onMessage: {
+        addListener: vi.fn((handler: (message: unknown) => void) => {
+          onMessage = handler
+        }),
+        removeListener: vi.fn(),
+      },
+      onDisconnect: {
+        addListener: vi.fn((handler: () => void) => {
+          onDisconnect = handler
+        }),
+        removeListener: vi.fn(),
+      },
+    } as unknown as chrome.runtime.Port
+    const onConnectAddListener = vi.mocked(chrome.runtime.onConnect.addListener)
+    onConnectAddListener.mockClear()
+
+    setupPortListener()
+    const connectHandler = onConnectAddListener.mock.calls[0][0]
+    connectHandler(listenerPort)
+
+    const deferred = deferredStream({ onAbort: () => true })
+    setupStreamResult(deferred.stream)
+    onMessage(makeChatMsg())
+    await vi.waitFor(() => {
+      expect(posted).toContainEqual({ type: 'chunk', delta: 'a' })
+    })
+
+    onDisconnect()
+    deferred.resolve()
+    await vi.waitFor(() => {
+      expect(toolMocks.WorkingMemoryStore.release).toHaveBeenCalledTimes(1)
+    })
+
+    expect(posted.some((message) => message.type === 'error')).toBe(false)
+    expect(posted.some((message) => message.type === 'done')).toBe(false)
   })
 })
 
@@ -469,7 +923,7 @@ describe('protocol', () => {
 })
 
 describe('tool auxiliary messages', () => {
-  it('pushes tool_start + insight(understanding) + tool_result for slang_understand', async () => {
+  it('pushes tool_start + tool_result + insight(understanding) for slang_understand (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -486,7 +940,7 @@ describe('tool auxiliary messages', () => {
       ),
     )
     await handleChatMessage(port, session, makeChatMsg())
-    // 顺序：tool_start -> insight(understanding) -> tool_result -> done
+    // S-1 决策 A1 顺序：tool_start -> tool_result -> insight(understanding) -> done
     expect(posted).toContainEqual({
       type: 'tool_start',
       toolCallId: 'call_u1',
@@ -504,7 +958,7 @@ describe('tool auxiliary messages', () => {
       toolName: 'slang_understand',
       result: understanding,
     })
-    // 顺序断言：insight 在 tool_result 之前
+    // 顺序断言：tool_result 在 insight(understanding) 之前（S-1 决策 A1）
     const insightIdx = posted.findIndex(
       (m) => m.type === 'insight' && m.kind === 'understanding',
     )
@@ -512,11 +966,11 @@ describe('tool auxiliary messages', () => {
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_u1',
     )
     expect(insightIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + videos + tool_result for bilibili_search', async () => {
+  it('pushes tool_start + tool_result + videos for bilibili_search (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -537,24 +991,59 @@ describe('tool auxiliary messages', () => {
       toolName: 'bilibili_search',
       args: { keyword: '鬼畜' },
     })
-    expect(posted).toContainEqual({ type: 'videos', videos })
+    // S-3：videos 推送携带批次归属，batchId 由 toolCallId 派生
+    expect(posted).toContainEqual({
+      type: 'videos',
+      videos,
+      batchId: 'search_call_s1',
+      reranked: false,
+      rerankPending: false,
+    })
     expect(posted).toContainEqual({
       type: 'tool_result',
       toolCallId: 'call_s1',
       toolName: 'bilibili_search',
       result: videos,
     })
-    // 顺序：videos 在 tool_result 之前
+    // 顺序：videos 在 tool_result 之后（S-1 决策 A1）
     const videosIdx = posted.findIndex((m) => m.type === 'videos')
     const toolResultIdx = posted.findIndex(
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_s1',
     )
     expect(videosIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(videosIdx)
+    expect(videosIdx).toBeGreaterThan(toolResultIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + insight(rerank) + videos(reordered) + tool_result for video_rerank', async () => {
+  it('marks a search batch as rerank-pending when it contains more than three videos', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const videos = [
+      { bvid: 'BV1aa', title: 'video1' },
+      { bvid: 'BV2bb', title: 'video2' },
+      { bvid: 'BV3cc', title: 'video3' },
+      { bvid: 'BV4dd', title: 'video4' },
+    ]
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s2', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s2', 'bilibili_search', videos),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'videos',
+      videos,
+      batchId: 'search_call_s2',
+      reranked: false,
+      rerankPending: true,
+    })
+  })
+
+  it('pushes tool_start + tool_result + insight(rerank) + videos(reordered) for video_rerank (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -591,6 +1080,7 @@ describe('tool auxiliary messages', () => {
       data: rerankResult,
     })
     // 重排后的视频列表按 rerank items 的 bvid 顺序
+    // S-3：本会话无前置 bilibili_search，batchId 降级为 rerank_<toolCallId>，reranked=true
     expect(posted).toContainEqual({
       type: 'videos',
       videos: [
@@ -598,6 +1088,9 @@ describe('tool auxiliary messages', () => {
         { bvid: 'BV1', title: 'v1' },
         { bvid: 'BV3', title: 'v3' },
       ],
+      batchId: 'rerank_call_r1',
+      reranked: true,
+      rerankPending: false,
     })
     expect(posted).toContainEqual({
       type: 'tool_result',
@@ -605,7 +1098,7 @@ describe('tool auxiliary messages', () => {
       toolName: 'video_rerank',
       result: rerankResult,
     })
-    // 顺序：insight(rerank) -> videos -> tool_result
+    // S-1 决策 A1 顺序：tool_start -> tool_result -> insight(rerank) -> videos(reordered)
     const insightIdx = posted.findIndex((m) => m.type === 'insight' && m.kind === 'rerank')
     const videosIdx = posted.findIndex(
       (m) => m.type === 'videos' && m.videos?.[0]?.bvid === 'BV2',
@@ -614,12 +1107,77 @@ describe('tool auxiliary messages', () => {
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_r1',
     )
     expect(insightIdx).toBeGreaterThanOrEqual(0)
+    // tool_result 在 insight(rerank) 和 videos 之前
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(videosIdx).toBeGreaterThan(insightIdx)
-    expect(toolResultIdx).toBeGreaterThan(videosIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + insight(clarification) + tool_result for ask_clarification', async () => {
+  // S-3：标准工作流「搜索 -> 重排」下，两次 videos 推送必须落在同一批次上，
+  // 否则 content script 会把重排结果当作新搜索，产生两组视频网格。
+  it('reuses the same batchId for bilibili_search then video_rerank (S-3)', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const searchResults = [
+      { bvid: 'BV1', title: 'v1' },
+      { bvid: 'BV2', title: 'v2' },
+    ]
+    const rerankResult = {
+      items: [
+        { bvid: 'BV2', score: 0.9, reason: 'best' },
+        { bvid: 'BV1', score: 0.5, reason: 'ok' },
+      ],
+      strategy: 'llm' as const,
+      trimmed: 0,
+    }
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s1', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s1', 'bilibili_search', searchResults),
+        toolCall('call_r1', 'video_rerank', { videos: searchResults, intent: 'test' }),
+        toolResult('call_r1', 'video_rerank', rerankResult),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const videoMsgs = posted.filter((m) => m.type === 'videos')
+    expect(videoMsgs).toHaveLength(2)
+    // 关键断言：重排推送复用搜索批次标识
+    expect(videoMsgs[0].batchId).toBe('search_call_s1')
+    expect(videoMsgs[1].batchId).toBe('search_call_s1')
+    // 首次推送未重排，第二次标记为重排结果
+    expect(videoMsgs[0].reranked).toBe(false)
+    expect(videoMsgs[0].rerankPending).toBe(false)
+    expect(videoMsgs[1].reranked).toBe(true)
+    expect(videoMsgs[1].rerankPending).toBe(false)
+    // 重排后顺序按 rerank items
+    expect(videoMsgs[1].videos?.map((v: { bvid: string }) => v.bvid)).toEqual(['BV2', 'BV1'])
+  })
+
+  it('generates distinct batchIds for two consecutive searches (S-3)', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolCall('call_s1', 'bilibili_search', { keyword: '鬼畜' }),
+        toolResult('call_s1', 'bilibili_search', [{ bvid: 'BV1', title: 'v1' }]),
+        toolCall('call_s2', 'bilibili_search', { keyword: '编程' }),
+        toolResult('call_s2', 'bilibili_search', [{ bvid: 'BV2', title: 'v2' }]),
+      ),
+    )
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const videoMsgs = posted.filter((m) => m.type === 'videos')
+    expect(videoMsgs).toHaveLength(2)
+    // 两次独立搜索产生不同批次，content script 才能各自保留
+    expect(videoMsgs[0].batchId).toBe('search_call_s1')
+    expect(videoMsgs[1].batchId).toBe('search_call_s2')
+    expect(videoMsgs[0].batchId).not.toBe(videoMsgs[1].batchId)
+  })
+
+  it('pushes tool_start + tool_result + insight(clarification) for ask_clarification (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -667,11 +1225,12 @@ describe('tool auxiliary messages', () => {
       (m) => m.type === 'tool_result' && m.toolCallId === 'call_c1',
     )
     expect(insightIdx).toBeGreaterThanOrEqual(0)
-    expect(toolResultIdx).toBeGreaterThan(insightIdx)
+    // S-1 决策 A1：tool_result 在 insight(clarification) 之前
+    expect(toolResultIdx).toBeLessThan(insightIdx)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('pushes tool_start + insight(expansion) + tool_result for query_expand', async () => {
+  it('pushes tool_start + tool_result + insight(expansion) for query_expand (S-1 A1)', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -689,6 +1248,12 @@ describe('tool auxiliary messages', () => {
     )
     await handleChatMessage(port, session, makeChatMsg())
     expect(posted).toContainEqual({
+      type: 'tool_start',
+      toolCallId: 'call_e1',
+      toolName: 'query_expand',
+      args: { query: '鬼畜' },
+    })
+    expect(posted).toContainEqual({
       type: 'insight',
       kind: 'expansion',
       data: expansion,
@@ -699,6 +1264,27 @@ describe('tool auxiliary messages', () => {
       toolName: 'query_expand',
       result: expansion,
     })
+    // S-1 决策 A1 全序列顺序：tool_start -> tool_result -> insight(expansion) -> done
+    const toolStartIdx = posted.findIndex(
+      (m) => m.type === 'tool_start' && m.toolCallId === 'call_e1',
+    )
+    const insightIdx = posted.findIndex(
+      (m) => m.type === 'insight' && m.kind === 'expansion',
+    )
+    const toolResultIdx = posted.findIndex(
+      (m) => m.type === 'tool_result' && m.toolCallId === 'call_e1',
+    )
+    const doneIdx = posted.findIndex((m) => m.type === 'done')
+    expect(toolStartIdx).toBeGreaterThanOrEqual(0)
+    expect(insightIdx).toBeGreaterThanOrEqual(0)
+    expect(doneIdx).toBeGreaterThanOrEqual(0)
+    // 严格顺序断言：tool_start < tool_result < insight < done
+    expect(toolStartIdx).toBeLessThan(toolResultIdx)
+    expect(toolResultIdx).toBeLessThan(insightIdx)
+    expect(insightIdx).toBeLessThan(doneIdx)
+    // 终端事件断言：done 是最后一条消息且只出现一次
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    expect(posted.filter((m) => m.type === 'done')).toHaveLength(1)
   })
 
   it('tool-error pushes error message with tool name context', async () => {
@@ -722,7 +1308,83 @@ describe('tool auxiliary messages', () => {
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('registers 5 tools with streamText', async () => {
+  it('classifies BilibiliNetworkError with its structured cause', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = Object.assign(
+      new Error('Bilibili search request failed: fetch failed'),
+      { name: 'BilibiliNetworkError', cause: { code: 'ENOTFOUND' } },
+    )
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_net', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'DNS_ERROR',
+      message: '域名解析失败，请检查 Base URL 或网络',
+    })
+  })
+
+  it('classifies stringified BilibiliNetworkError HTTP failures', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolErrorPart(
+          'BilibiliNetworkError: Bilibili search request failed: HTTP 500',
+          'call_net_http',
+          'bilibili_search',
+        ),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'SERVER_ERROR',
+      message: '服务端异常，请稍后重试',
+    })
+  })
+
+  it('keeps Bilibili risk errors in business-error semantics', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = new Error('Bilibili risk control triggered')
+    error.name = 'BilibiliRiskError'
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_risk', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'BILIBILI_RISK',
+      message: '触发风控，请稍后再试或登录 B站',
+    })
+  })
+
+  it('keeps Bilibili API errors in business-error semantics', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    const error = new Error('Bilibili API returned code -509')
+    error.name = 'BilibiliApiError'
+    setupStreamResult(streamOf(toolErrorPart(error, 'call_api', 'bilibili_search')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(posted).toContainEqual({
+      type: 'error',
+      code: 'BILIBILI_API',
+      message: 'B站接口异常',
+    })
+  })
+
+  it('registers existing video tools and skill tools with streamText', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -736,9 +1398,11 @@ describe('tool auxiliary messages', () => {
         'bilibili_search',
         'video_rerank',
         'ask_clarification',
+        'load_skill',
+        'read_skill_file',
       ]),
     )
-    expect(Object.keys(toolsArg)).toHaveLength(5)
+    expect(Object.keys(toolsArg)).toHaveLength(7)
   })
 
   it('creates and releases WorkingMemoryStore per session', async () => {

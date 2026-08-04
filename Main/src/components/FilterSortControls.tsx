@@ -11,6 +11,8 @@ interface FilterSortControlsProps {
 }
 
 const SORT_OPTIONS: { value: SortField; label: string }[] = [
+  // 智能排序表示保留后端 video_rerank 返回的顺序。
+  { value: 'rerank', label: '智能排序' },
   { value: 'play', label: '播放量' },
   { value: 'pubdate', label: '发布时间' },
   { value: 'duration', label: '时长' },

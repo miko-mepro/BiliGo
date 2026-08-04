@@ -100,8 +100,22 @@ export function connectChatPort(handlers: ConnectHandlers): PortConnection {
     fireDisconnect()
   }
 
-  port.onMessage.addListener(messageListener)
-  port.onDisconnect.addListener(disconnectListener)
+  try {
+    port.onMessage.addListener(messageListener)
+    port.onDisconnect.addListener(disconnectListener)
+  } catch {
+    fireDisconnect()
+    return {
+      postMessage(): void {},
+      onMessage(): () => void {
+        return () => {}
+      },
+      disconnect(): void {},
+      isDisconnected(): boolean {
+        return true
+      },
+    }
+  }
 
   startHeartbeat()
 

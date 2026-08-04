@@ -18,3 +18,5 @@ export {
   type PersistedConversation,
 } from './store.js';
 export { HistorySync, type HistoryIndexCallback } from './sync.js';
+// 历史索引数据入口校验（R-1）：store 与 sync 共用的纯函数校验器
+export { sanitizeHistoryIndex } from './validate.js';

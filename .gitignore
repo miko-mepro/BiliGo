@@ -2,4 +2,7 @@ Fetch/
 .opencode/
 .swarm/
 Backend/
+docs/
 Docs/
+.trellis
+.playwright-mcp

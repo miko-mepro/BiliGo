@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   executeVideoRerank,
+  RERANK_LLM_INACTIVITY_TIMEOUT_MS,
   type RerankMemoryStore,
   type LlmJsonCaller,
 } from '../../src/tools/video-rerank.js'
@@ -90,13 +91,15 @@ beforeEach(() => {
 /**
  * 构造 rerank deps，统一注入 mock 的 callLlmForJson 和传入的 memoryStore。
  */
-function makeDeps(memoryStore: RerankMemoryStore): {
+function makeDeps(memoryStore: RerankMemoryStore, onActivity?: () => void): {
   memoryStore: RerankMemoryStore
   callLlmForJson: LlmJsonCaller
+  onActivity?: () => void
 } {
   return {
     memoryStore,
     callLlmForJson: asLlmCaller(llmMocks.callLlmForJson),
+    ...(onActivity ? { onActivity } : {}),
   }
 }
 
@@ -147,8 +150,71 @@ describe('video_rerank / tags', () => {
     expect(result.strategy).toBe('llm')
     // LLM 仍被调用
     expect(llmMocks.callLlmForJson).toHaveBeenCalledTimes(1)
+    expect(llmMocks.callLlmForJson.mock.calls[0][1]).toEqual({
+      inactivityTimeoutMs: RERANK_LLM_INACTIVITY_TIMEOUT_MS,
+    })
     // 失败的视频按空标签处理，不阻断
     expect(result.items).toHaveLength(2)
+  })
+
+  it('limits tag requests to 15 concurrent calls across three batches', async () => {
+    const cards = videos(30)
+    let active = 0
+    let maxActive = 0
+    const releases: Array<() => void> = []
+    tagsMocks.fetchVideoTags.mockImplementation(() => new Promise((resolve) => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      releases.push(() => {
+        active -= 1
+        resolve([])
+      })
+    }))
+    llmMocks.callLlmForJson.mockResolvedValue({
+      items: cards.map((card) => ({ bvid: card.bvid, score: 0.5, reason: 'ok' })),
+    })
+    const activity = vi.fn()
+    const memoryStore = createMemoryStore()
+    const promise = executeVideoRerank(cards, '意图', makeDeps(memoryStore, activity))
+
+    await vi.waitFor(() => {
+      expect(tagsMocks.fetchVideoTags).toHaveBeenCalledTimes(15)
+    })
+    expect(maxActive).toBe(15)
+    releases.splice(0).forEach((release) => release())
+
+    await vi.waitFor(() => {
+      expect(tagsMocks.fetchVideoTags).toHaveBeenCalledTimes(30)
+    })
+    expect(maxActive).toBe(15)
+    releases.splice(0).forEach((release) => release())
+
+    const result = await promise
+    expect(result.strategy).toBe('llm')
+    expect(activity).toHaveBeenCalledTimes(6)
+  })
+
+  it('reports completed tag batches and each LLM output activity', async () => {
+    const cards = videos(6)
+    const activity = vi.fn()
+    tagsMocks.fetchVideoTags.mockResolvedValue([])
+    llmMocks.callLlmForJson.mockImplementation(async (
+      _messages,
+      options: { onActivity?: () => void } | undefined,
+    ) => {
+      options?.onActivity?.()
+      options?.onActivity?.()
+      return {
+        items: cards.map((card) => ({ bvid: card.bvid, score: 0.5, reason: 'ok' })),
+      }
+    })
+    const memoryStore = createMemoryStore()
+
+    const result = await executeVideoRerank(cards, '意图', makeDeps(memoryStore, activity))
+
+    expect(result.strategy).toBe('llm')
+    expect(activity).toHaveBeenCalledTimes(4)
+    expect(llmMocks.callLlmForJson.mock.calls[0][1].onActivity).toBe(activity)
   })
 })
 

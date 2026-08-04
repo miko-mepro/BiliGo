@@ -1,0 +1,6 @@
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/prd.md","reason":"Confirmed product requirements, constraints, scope boundaries, and observable acceptance criteria."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/design.md","reason":"Technical architecture for build-time discovery, bundled progressive loading, runtime tools, caching, and failure boundaries."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/implement.md","reason":"Ordered implementation work, validation commands, review gates, and rollback points."}
+{"file":".trellis/tasks/08-04-bili-progressive-skill-loading/research/skill-loading-research.md","reason":"Official Agent Skills, Codex, Claude Code, and Copilot loading conventions used to select the portable directory and progressive-disclosure model."}
+{"file":".trellis/spec/shared/code-quality.md","reason":"Mandatory TypeScript quality, error handling, naming, and test requirements."}
+{"file":".trellis/spec/shared/typescript.md","reason":"Explicit return types, Zod validation, type-safe unions, and import conventions for the loader/tools."}
