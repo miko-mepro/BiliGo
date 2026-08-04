@@ -127,6 +127,8 @@ export function MessageList({
   const [userScrolled, setUserScrolled] = useState(false);
   const lastScrollAtRef = useRef(0);
   const previousLoadingRef = useRef(state.isLoading);
+  // S-2 修复：标记程序触发的滚动，避免 scrollIntoView 动画被 handleScroll 误判为用户上拉
+  const programmaticScrollRef = useRef(false);
 
   // 只把实际滚动容器的位置作为用户阅读状态来源；该元素由 CSS 设置 overflow-y:auto。
   const handleScroll = useCallback(() => {
@@ -139,6 +141,15 @@ export function MessageList({
     );
     const atBottom = distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD;
     setIsAtBottom(atBottom);
+
+    // S-2 修复：程序触发的 scrollIntoView 动画会触发 onScroll，
+    // 检测到 programmaticScrollRef 标记时清除标记并跳过 setUserScrolled，
+    // 避免 smooth 动画过程中容器暂时超过阈值被误判为用户上拉。
+    if (programmaticScrollRef.current) {
+      programmaticScrollRef.current = false;
+      return;
+    }
+
     setUserScrolled(!atBottom);
   }, []);
 
@@ -186,6 +197,7 @@ export function MessageList({
     const now = Date.now();
     if (now - lastScrollAtRef.current < SCROLL_THROTTLE_MS) return;
     lastScrollAtRef.current = now;
+    programmaticScrollRef.current = true;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [renderItems.length, state.streamingContent, state.streamingReasoning, videoBatches, isAtBottom, userScrolled]);
 

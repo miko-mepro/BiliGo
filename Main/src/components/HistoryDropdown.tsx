@@ -87,12 +87,17 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
   const syncRef = useRef<HistorySync | null>(null)
   // 标记组件卸载，防止 pending 的重命名 Promise 返回后写入过期状态。
   const renameCancelRef = useRef(false)
+  // 重命名操作代次计数器，每次 handleRenameConfirm 调用时自增，
+  // 异步完成时检查代次是否匹配，丢弃过期结果（旧请求覆盖新标题问题）。
+  const renameGenerationRef = useRef(0)
 
   // 组件重新挂载时允许新的重命名；卸载后旧闭包只能忽略结果。
   useEffect(() => {
     renameCancelRef.current = false
     return () => {
       renameCancelRef.current = true
+      // 代次归零，使所有 pending 的旧请求不再匹配，避免输出过期错误日志。
+      renameGenerationRef.current = 0
     }
   }, [])
 
@@ -192,20 +197,23 @@ export function HistoryDropdown(props: HistoryDropdownProps): React.ReactElement
         setEditing(null)
         return
       }
+      // 自增代次计数器，用于异步完成时识别请求是否已过期
+      renameGenerationRef.current += 1
+      const generation = renameGenerationRef.current
       try {
         await onRename(id, newTitle)
-        // 视图切换会卸载组件，异步完成后不得再更新旧历史列表。
-        if (renameCancelRef.current) return
+        // 代次不匹配说明已有新请求发起，丢弃旧结果避免覆盖。
+        if (generation !== renameGenerationRef.current) return
         setRecords((prev) =>
           prev.map((item) => (item.id === id ? { ...item, title: newTitle } : item)),
         )
       } catch (err) {
-        // 卸载后的失败属于已取消请求，不输出旧组件的错误日志。
-        if (renameCancelRef.current) return
+        // 过期请求的错误不输出，避免旧组件的误导日志。
+        if (generation !== renameGenerationRef.current) return
         console.warn('[BiliAgent] history onRename failed', err)
       } finally {
-        // editing 状态和 ref 也属于组件状态，卸载后不再写入。
-        if (!renameCancelRef.current) {
+        // 只有当前代次才负责清理编辑态；新代次已开始则交由新代次处理。
+        if (generation === renameGenerationRef.current) {
           editingRef.current = false
           setEditing(null)
         }

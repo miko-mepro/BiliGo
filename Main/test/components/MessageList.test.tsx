@@ -951,20 +951,34 @@ describe('MessageList', () => {
   // ===== 阶段4缺口7：批次独立状态 =====
   describe('批次独立状态（阶段4缺口7）', () => {
     it('同batch视频更新后保留用户手动sort/date/duration选择', () => {
+      const now = Date.now() / 1000;
       mockState = {
         ...mockState,
         messages: [{ role: 'assistant', content: '搜索结果', timestamp: 1000 }],
         videoBatches: [
-          makeBatch('b1', [
-            makeVideo('BV1', '视频A', { pubdate: 1000, duration: '30:00', play: 500 }),
-            makeVideo('BV2', '视频B', { pubdate: 2000, duration: '5:00', play: 100 }),
-          ], 1000),
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV1', '视频A', {
+                pubdate: now - 2 * 86400,
+                duration: '30:00',
+                play: 500,
+              }),
+              makeVideo('BV2', '视频B', {
+                pubdate: now - 2 * 86400,
+                duration: '5:00',
+                play: 100,
+              }),
+            ],
+            1000,
+          ),
         ],
       };
 
       const { container, rerender } = render(<MessageList />);
-      // 用户选择按发布时间排序 + 时长筛选"长视频"
+      // 用户选择按发布时间排序、一个月内和“长视频”筛选。
       fireEvent.change(screen.getByLabelText(/排序/i), { target: { value: 'pubdate' } });
+      fireEvent.change(screen.getByLabelText(/时间/i), { target: { value: 'month' } });
       fireEvent.change(screen.getByLabelText(/时长/i), { target: { value: 'long' } });
 
       // 验证当前筛选结果：仅视频A（30:00 > 20分钟）
@@ -976,10 +990,23 @@ describe('MessageList', () => {
       mockState = {
         ...mockState,
         videoBatches: [
-          makeBatch('b1', [
-            makeVideo('BV2', '视频B', { pubdate: 2000, duration: '5:00', play: 100 }),
-            makeVideo('BV1', '视频A', { pubdate: 1000, duration: '30:00', play: 500 }),
-          ], 1000, true),
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV2', '视频B', {
+                pubdate: now - 2 * 86400,
+                duration: '5:00',
+                play: 100,
+              }),
+              makeVideo('BV1', '视频A', {
+                pubdate: now - 2 * 86400,
+                duration: '30:00',
+                play: 500,
+              }),
+            ],
+            1000,
+            true,
+          ),
         ],
       };
       rerender(<MessageList />);
@@ -991,8 +1018,10 @@ describe('MessageList', () => {
 
       // 排序和时长选择器继续保持用户选择
       const sortSelect = screen.getByLabelText(/排序/i) as HTMLSelectElement;
+      const dateSelect = screen.getByLabelText(/时间/i) as HTMLSelectElement;
       const durationSelect = screen.getByLabelText(/时长/i) as HTMLSelectElement;
       expect(sortSelect.value).toBe('pubdate');
+      expect(dateSelect.value).toBe('month');
       expect(durationSelect.value).toBe('long');
     });
 
