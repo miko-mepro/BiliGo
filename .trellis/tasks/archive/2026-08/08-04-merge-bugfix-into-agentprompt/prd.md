@@ -22,12 +22,20 @@
 
 ## Acceptance Criteria
 
-- [ ] `Agentprompt` 仍为当前分支，且 `bugfix` 分支头已成为当前历史祖先。
-- [ ] 合并结果同时保留合并前 `Agentprompt` 分支头和 `bugfix` 分支头的历史与有效内容，任何一方的独有提交都没有被丢弃。
-- [ ] 合并完成后不存在未解决的 Git 冲突标记或 unmerged paths。
-- [ ] `Main/src/background/stream.ts` 与 `Main/test/background/stream.test.ts` 的冲突已按两分支意图解决，相关测试或等价静态验证通过。
-- [ ] 任务开始前的无关工作区变更未被丢弃、覆盖或擅自提交。
-- [ ] 合并结果和验证结果已向用户说明；不执行远程推送。
+- [x] `Agentprompt` 仍为当前分支，且 `bugfix` 分支头已成为当前历史祖先。
+- [x] 合并结果同时保留合并前 `Agentprompt` 分支头和 `bugfix` 分支头的历史与有效内容，任何一方的独有提交都没有被丢弃。
+- [x] 合并完成后不存在未解决的 Git 冲突标记或 unmerged paths。
+- [x] `Main/src/background/stream.ts` 与 `Main/test/background/stream.test.ts` 的冲突已按两分支意图解决，相关测试或等价静态验证通过。
+- [x] 任务开始前的无关工作区变更未被丢弃、覆盖或擅自提交；两个同路径未跟踪文件的原始内容已备份到 `/tmp/opencode/merge-bugfix-backup-20260804-1033`。
+- [x] 合并结果和验证结果已向用户说明；未执行远程推送。
+
+## Completion Evidence
+
+- 合并提交：`b1e3967`，父提交为 `15fac0e`（合并前 `Agentprompt`）和 `be7d28f`（`bugfix`）。
+- `pnpm typecheck`：通过。
+- `pnpm test -- test/background/stream.test.ts`：通过；Vitest 实际执行 44 个测试文件、830 个测试，全部通过；`stream.test.ts` 53 项通过。
+- 定向 ESLint：`stream.ts` 通过；`stream.test.ts` 仍有 13 个既有 `any`/未使用变量问题，合并前基线已有 12 个同类问题，本任务未扩大范围修复。
+- 工作区无未合并路径；剩余未跟踪项为任务开始前已有的 Trellis、Playwright 和测试产物文件。
 
 ## Out Of Scope
 
