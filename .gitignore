@@ -4,3 +4,5 @@ Fetch/
 Backend/
 docs/
 Docs/
+.trellis
+.playwright-mcp
