@@ -49,7 +49,13 @@ export async function callLlmForJson<T>(
       if (object !== null) return object
     }
 
-    const text = await tryGenerateText(model, modelMessages, system, inactivityTimeoutMs)
+    const text = await tryGenerateText(
+      model,
+      modelMessages,
+      system,
+      inactivityTimeoutMs,
+      options.onActivity,
+    )
     if (text === null) return null
     if (text.trim() === '') return null
 
@@ -154,6 +160,7 @@ async function tryGenerateText(
   messages: ModelMessage[],
   system: string | undefined,
   inactivityTimeoutMs: number,
+  onActivity?: () => void,
 ): Promise<string | null> {
   const idleTimeout = createInactivityTimeout(inactivityTimeoutMs)
 
@@ -168,6 +175,8 @@ async function tryGenerateText(
     let text = ''
     for await (const delta of result.textStream) {
       idleTimeout.reset()
+      // 只向调用方报告内部活动，不把 rerank 文本透传到聊天前端。
+      onActivity?.()
       text += delta
     }
     return text
@@ -183,6 +192,8 @@ export const LLM_JSON_INACTIVITY_TIMEOUT_MS = 45_000
 
 export interface LlmJsonOptions {
   inactivityTimeoutMs?: number
+  /** 内部模型输出或阶段完成时的活动通知，不携带文本内容。 */
+  onActivity?: () => void
 }
 
 function resolveInactivityTimeout(value: number | undefined): number {

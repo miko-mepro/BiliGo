@@ -243,13 +243,13 @@ const askClarificationMemoryStore = WorkingMemoryStore
  *   （由 bilibili_search 参数 `analyze_covers` 触发，不注册为独立 tool）。
  * - ask_clarification：裸函数 `askClarification`，用 `tool()` 包装为 AI SDK tool。
  */
-function buildTools(traceId: string): ToolSet {
+function buildTools(traceId: string, onActivity?: () => void): ToolSet {
   const boundMemory = bindMemoryStore(traceId)
 
   const slangUnderstand = createSlangUnderstandTool({ memoryStore: boundMemory })
   const queryExpand = createQueryExpandTool({ memoryStore: boundMemory })
   const bilibiliSearch = createBilibiliSearchTool({ analyzeCovers })
-  const videoRerank = createVideoRerankTool({ memoryStore: boundMemory })
+  const videoRerank = createVideoRerankTool({ memoryStore: boundMemory, onActivity })
 
   const askClarificationTool = tool({
     description:
@@ -448,8 +448,6 @@ export async function handleChatMessage(
   const model: LanguageModel = createModel(config)
   const modelMessages = toModelMessages(msg.messages)
   const traceId = createTraceId(msg.conversationId)
-  await WorkingMemoryStore.create(traceId)
-  const tools = buildTools(traceId)
 
   const abortController = new AbortController()
   session.abortController = abortController
@@ -459,8 +457,17 @@ export async function handleChatMessage(
   // 用 setTimeout + AbortController 替代 AbortSignal.timeout()，
   // 使定时器可在 finally 中取消，避免 release 期间超时竞态（N-2）。
   const timeoutController = new AbortController()
-  const timeoutId = setTimeout(() => timeoutController.abort(), CHAT_STREAM_TIMEOUT_MS)
+  let timeoutId: ReturnType<typeof setTimeout> = setTimeout(
+    () => timeoutController.abort(),
+    CHAT_STREAM_TIMEOUT_MS,
+  )
   const timeoutSignal = timeoutController.signal
+  // 外层流或 rerank 内部有新活动时重新开始 45 秒空闲倒计时。
+  const resetChatTimeout = (): void => {
+    if (timeoutSignal.aborted) return
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => timeoutController.abort(), CHAT_STREAM_TIMEOUT_MS)
+  }
   const handleTimeout = (): void => {
     if (session.abortReason !== null) return
     session.abortReason = 'timeout'
@@ -484,6 +491,9 @@ export async function handleChatMessage(
   const toolInputs = new Map<string, unknown>()
 
   try {
+    await WorkingMemoryStore.create(traceId)
+    const tools = buildTools(traceId, resetChatTimeout)
+
     // 将 streamText 创建也放入 try，确保 SDK 同步抛错时同样释放信号和 WorkingMemory。
     const result = streamText({
       model,
@@ -501,6 +511,8 @@ export async function handleChatMessage(
     }
     streamLoop: for await (const part of result.stream as AsyncIterable<TextStreamPart<ToolSet>>) {
       if (session.disconnected) return
+      // 每个外层事件都代表上游仍在工作，避免长工具调用被固定总时长误判。
+      resetChatTimeout()
       switch (part.type) {
         case 'text-delta':
           postToPort(port, session, { type: 'chunk', delta: part.text })
