@@ -140,6 +140,21 @@ describe('callLlmForJson fallback path', () => {
     expect(result).toEqual({ k: 'v' })
   })
 
+  it('calls the internal activity callback for every streamed text chunk', async () => {
+    setupActiveProvider()
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('{"a":', '1', '}') })
+    const onActivity = vi.fn()
+
+    const result = await callLlmForJson(
+      makeMessages('hi'),
+      undefined,
+      { onActivity },
+    )
+
+    expect(result).toEqual({ a: 1 })
+    expect(onActivity).toHaveBeenCalledTimes(3)
+  })
+
   it('returns null when the text stream is empty', async () => {
     setupActiveProvider()
     aiMocks.streamText.mockReturnValue({ textStream: textStream('   ') })

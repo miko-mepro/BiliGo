@@ -39,7 +39,10 @@ const toolMocks = vi.hoisted(() => ({
   createSlangUnderstandTool: vi.fn(() => ({ __kind: 'slang_understand' })),
   createQueryExpandTool: vi.fn(() => ({ __kind: 'query_expand' })),
   createBilibiliSearchTool: vi.fn(() => ({ __kind: 'bilibili_search' })),
-  createVideoRerankTool: vi.fn(() => ({ __kind: 'video_rerank' })),
+  createVideoRerankTool: vi.fn((deps: { onActivity?: () => void }) => ({
+    __kind: 'video_rerank',
+    onActivity: deps.onActivity,
+  })),
   askClarification: vi.fn(),
   WorkingMemoryStore: {
     create: vi.fn(() => Promise.resolve({ traceId: 'test-trace' })),
@@ -166,6 +169,62 @@ function streamUntilAbort(signal: AbortSignal): AsyncIterable<any> {
       })
     },
   }
+}
+
+function streamWithoutOutputUntilAbort(signal: AbortSignal): AsyncIterable<unknown> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      await new Promise<never>((_, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('aborted', 'AbortError')),
+          { once: true },
+        )
+      })
+      // Promise 只会因 abort 结束；展开空序列保证异步生成器不产生任何事件。
+      yield* []
+    },
+  }
+}
+
+function delayedSecondStream(signal: AbortSignal) {
+  let releaseSecond!: () => void
+  const secondReady = new Promise<void>((resolve) => {
+    releaseSecond = resolve
+  })
+  return {
+    stream: {
+      async *[Symbol.asyncIterator]() {
+        yield textDelta('第一次输出')
+        await secondReady
+        if (signal.aborted) {
+          throw new DOMException('aborted', 'AbortError')
+        }
+        yield textDelta('第二次输出')
+        await new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(new DOMException('aborted', 'AbortError'))
+            return
+          }
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true },
+          )
+        })
+      },
+    },
+    releaseSecond,
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  // fake timers 下只推进异步生成器的 Promise 队列，不额外推进超时计时器。
+  for (let i = 0; i < 5; i += 1) await Promise.resolve()
 }
 
 function makeProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
@@ -409,6 +468,94 @@ describe('termination', () => {
         message: '聊天流请求超时，请稍后重试',
       })
       expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports timeout when the stream never emits any output', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamWithoutOutputUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS)
+      await promise
+
+      expect(session.abortReason).toBe('timeout')
+      expect(posted).toContainEqual({ type: 'error', code: 'TIMEOUT', message: '聊天流请求超时，请稍后重试' })
+      expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('allows a second output after nearly 45 seconds when activity resets the idle timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      let delayed: ReturnType<typeof delayedSecondStream> | undefined
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => {
+        delayed = delayedSecondStream(abortSignal)
+        return delayed
+      })
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '第一次输出' })
+      })
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS - 100)
+      delayed!.releaseSecond()
+      await flushMicrotasks()
+      expect(posted).toContainEqual({ type: 'chunk', delta: '第二次输出' })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+
+      handleStop(session)
+      await promise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes the outer timeout from rerank internal activity without posting internal text', async () => {
+    vi.useFakeTimers()
+    try {
+      setupValidProvider()
+      const { port, posted } = createPort()
+      const session = createSession()
+      aiMocks.streamText.mockImplementation(({ abortSignal }: { abortSignal: AbortSignal }) => ({
+        stream: streamUntilAbort(abortSignal),
+      }))
+
+      const promise = handleChatMessage(port, session, makeChatMsg())
+      await vi.waitFor(() => {
+        expect(posted).toContainEqual({ type: 'chunk', delta: '开始' })
+      })
+      const rerankOptions = toolMocks.createVideoRerankTool.mock.calls[0][0] as {
+        onActivity?: () => void
+      }
+      expect(rerankOptions.onActivity).toBeTypeOf('function')
+
+      await vi.advanceTimersByTimeAsync(CHAT_STREAM_TIMEOUT_MS - 1_000)
+      rerankOptions.onActivity!()
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(session.abortReason).toBeNull()
+      expect(posted.some((message) => message.type === 'error' && message.code === 'TIMEOUT')).toBe(false)
+      expect(posted.some((message) => message.type === 'reasoning')).toBe(false)
+
+      handleStop(session)
+      await promise
     } finally {
       vi.useRealTimers()
     }
