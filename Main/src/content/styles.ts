@@ -831,6 +831,127 @@ const css = `
     line-height: 1.6;
   }
 
+  /* Markdown 渲染样式 — 仅 AI 消息使用 */
+  .bili-agent-message__markdown {
+    font-size: 14px;
+    line-height: 1.7;
+    word-wrap: break-word;
+    white-space: normal;
+  }
+
+  .bili-agent-message__markdown p {
+    margin: 0 0 8px;
+  }
+
+  .bili-agent-message__markdown p:last-child {
+    margin-bottom: 0;
+  }
+
+  .bili-agent-message__markdown h1,
+  .bili-agent-message__markdown h2,
+  .bili-agent-message__markdown h3,
+  .bili-agent-message__markdown h4,
+  .bili-agent-message__markdown h5,
+  .bili-agent-message__markdown h6 {
+    margin: 12px 0 6px;
+    font-weight: 600;
+    color: var(--bili-text-primary);
+    line-height: 1.4;
+  }
+
+  .bili-agent-message__markdown h1 { font-size: 18px; }
+  .bili-agent-message__markdown h2 { font-size: 16px; }
+  .bili-agent-message__markdown h3 { font-size: 15px; }
+  .bili-agent-message__markdown h4 { font-size: 14px; }
+  .bili-agent-message__markdown h5,
+  .bili-agent-message__markdown h6 { font-size: 13px; }
+
+  .bili-agent-message__markdown ul,
+  .bili-agent-message__markdown ol {
+    margin: 4px 0 8px;
+    padding-left: 20px;
+  }
+
+  .bili-agent-message__markdown li {
+    margin: 2px 0;
+  }
+
+  .bili-agent-message__markdown code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 13px;
+    background-color: var(--bili-bg-step);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--bili-text-primary);
+  }
+
+  .bili-agent-message__markdown pre {
+    margin: 8px 0;
+    padding: 12px;
+    background-color: var(--bili-bg-step);
+    border-radius: 8px;
+    overflow-x: auto;
+  }
+
+  .bili-agent-message__markdown pre code {
+    padding: 0;
+    background: none;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .bili-agent-message__markdown blockquote {
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-left: 3px solid var(--bili-pink);
+    color: var(--bili-text-secondary);
+    background-color: var(--bili-bg-think);
+    border-radius: 0 6px 6px 0;
+  }
+
+  .bili-agent-message__markdown table {
+    width: 100%;
+    margin: 8px 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .bili-agent-message__markdown th,
+  .bili-agent-message__markdown td {
+    padding: 6px 10px;
+    border: 1px solid var(--bili-border);
+    text-align: left;
+  }
+
+  .bili-agent-message__markdown th {
+    background-color: var(--bili-bg-step);
+    font-weight: 600;
+    color: var(--bili-text-primary);
+  }
+
+  .bili-agent-message__markdown td {
+    color: var(--bili-text-secondary);
+  }
+
+  .bili-agent-message__markdown a {
+    color: var(--bili-blue);
+    text-decoration: none;
+  }
+
+  .bili-agent-message__markdown a:hover {
+    text-decoration: underline;
+  }
+
+  .bili-agent-message__markdown hr {
+    margin: 12px 0;
+    border: none;
+    border-top: 1px solid var(--bili-border);
+  }
+
+  .bili-agent-message__markdown del {
+    color: var(--bili-text-muted);
+  }
+
   .bili-agent-message__time {
     font-size: 11px;
     color: var(--bili-text-muted);

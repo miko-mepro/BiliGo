@@ -21,6 +21,12 @@ import { createBilibiliSearchTool } from '../tools/bilibili-search.js'
 import { createVideoRerankTool } from '../tools/video-rerank.js'
 import { askClarification } from '../tools/ask-clarification.js'
 import { analyzeCovers } from '../tools/analyze-covers.js'
+import {
+  getMandatorySkillBodies,
+  listSkillMetadata,
+  loadSkillBody,
+  readSkillResource,
+} from '../skills/registry.js'
 import type {
   SlangUnderstandResult,
   QueryExpandResult,
@@ -38,10 +44,55 @@ export const SYSTEM_PROMPT = `你是 Bilibili 视频搜索助手。请严格按�
 5. **展示或澄清**：如果你对结果有信心，直接用自然语言总结并展示；如果意图非常模糊或多义且本会话还没追问过，调用 ask_clarification 追问（每会话最多 1 次）。
 
 硬性规则：
-- 单次会话工具调用不超过 5 轮，超过就停止调用工具直接回答。
+- 单次模型请求最多执行 7 个模型步骤（包括初始响应和后续工具步骤），超过就停止调用工具直接回答。
 - 不要跳过第 1、2 步直接搜索；除非用户输入已经是非常具体、明确的标准中文关键词。
 - 每次工具调用前先简短说明你的计划，再发起调用。
-- 当用户只是闲聊或问与视频搜索无关的问题时，可以直接回答，不调用任何工具。`
+- 当用户只是闲聊或问与视频搜索无关的问题时，可以直接回答，不调用任何工具。
+- 你可以使用 Markdown 格式（如 **粗体**、\`行内代码\`、列表、表格等）来组织回复，让内容更易读。`
+
+type MandatorySkillBodies = Awaited<ReturnType<typeof getMandatorySkillBodies>>
+
+const mandatorySkillCache = new Map<string, MandatorySkillBodies>()
+
+/**
+ * 按请求重新组装系统提示；mandatory 正文会重复带入每次请求，避免依赖上一次
+ * streamText 的上下文，而 autonomous 正文和资源只通过技能工具渐进加载。
+ */
+export function buildSystemPrompt(mandatoryBodies: MandatorySkillBodies): string {
+  const metadata = JSON.stringify(listSkillMetadata())
+  const bodies = mandatoryBodies
+    .map((body, index) => `### mandatory skill ${index + 1}\n${body}`)
+    .join('\n\n')
+
+  return `${SYSTEM_PROMPT}
+
+技能加载规则：
+- 下面的技能索引只包含元数据；不要把 autonomous 技能正文或引用资源当作已加载内容。
+- 需要使用 autonomous 技能时，调用 load_skill，并传入对应的 name；只在当前任务确实需要时加载。
+- 当已加载的 SKILL.md 明确引用某个文本资源且当前任务需要该资源时，调用 read_skill_file，传入 skill 和相对 path。
+- load_skill 只返回 SKILL.md 正文；read_skill_file 只返回选中的文本资源。工具返回结构化错误时，先根据错误重试或安全地继续回答。
+- 技能规则只约束最终助手回复，不改变工具实现、代码注释或 Git 提交信息。
+
+技能元数据索引：
+${metadata}
+
+已预加载的 mandatory 技能正文：
+${bodies}`
+}
+
+async function getCachedMandatorySkillBodies(conversationId: string): Promise<MandatorySkillBodies> {
+  const cached = mandatorySkillCache.get(conversationId)
+  if (cached !== undefined) return cached
+
+  const bodies = await getMandatorySkillBodies()
+  mandatorySkillCache.set(conversationId, bodies)
+  return bodies
+}
+
+/** 仅供测试隔离会话级缓存；MV3 worker 重启时模块重新加载也会自然清空缓存。 */
+export function resetMandatorySkillCache(): void {
+  mandatorySkillCache.clear()
+}
 
 export interface PortState {
   disconnected: boolean
@@ -121,7 +172,7 @@ function bindMemoryStore(traceId: string) {
 const askClarificationMemoryStore = WorkingMemoryStore
 
 /**
- * 构造 5 个 AI SDK tool，注入所需依赖（3.3 §2.1 第 4 步 / 3.2 §6）。
+ * 构造现有视频工具和技能工具，注入所需依赖（3.3 §2.1 第 4 步 / 3.2 §6）。
  *
  * - slang_understand / query_expand / video_rerank：使用 `createXxxTool` 工厂，
  *   注入 bindMemoryStore(traceId) 适配器。
@@ -154,12 +205,31 @@ function buildTools(traceId: string): ToolSet {
     },
   })
 
+  const loadSkillTool = tool({
+    description: '按名称加载一个 autonomous 技能的 SKILL.md 正文，不自动加载引用资源',
+    inputSchema: z.object({
+      name: z.string(),
+    }),
+    execute: async ({ name }) => loadSkillBody(name),
+  })
+
+  const readSkillFileTool = tool({
+    description: '读取已加载技能明确引用的、位于该技能目录内的文本资源',
+    inputSchema: z.object({
+      skill: z.string(),
+      path: z.string(),
+    }),
+    execute: async ({ skill, path }) => readSkillResource(skill, path),
+  })
+
   return {
     slang_understand: slangUnderstand,
     query_expand: queryExpand,
     bilibili_search: bilibiliSearch,
     video_rerank: videoRerank,
     ask_clarification: askClarificationTool,
+    load_skill: loadSkillTool,
+    read_skill_file: readSkillFileTool,
   } as ToolSet
 }
 
@@ -309,6 +379,7 @@ export async function handleChatMessage(
   const model: LanguageModel = createModel(config)
   const modelMessages = toModelMessages(msg.messages)
   const traceId = createTraceId(msg.conversationId)
+  const mandatorySkillBodies = await getCachedMandatorySkillBodies(msg.conversationId)
   await WorkingMemoryStore.create(traceId)
   const tools = buildTools(traceId)
 
@@ -321,10 +392,10 @@ export async function handleChatMessage(
 
   const result = streamText({
     model,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(mandatorySkillBodies),
     messages: modelMessages,
     tools,
-    stopWhen: isStepCount(5),
+    stopWhen: isStepCount(7),
     abortSignal: abortController.signal,
   })
 

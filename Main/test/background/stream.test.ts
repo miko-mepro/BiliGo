@@ -50,6 +50,34 @@ const toolMocks = vi.hoisted(() => ({
   analyzeCovers: vi.fn(),
 }))
 
+const skillMocks = vi.hoisted(() => ({
+  listSkillMetadata: vi.fn(() => [
+    {
+      name: 'bili-writing-format',
+      description: '规范 BiliGo 最终回复格式',
+      activation: 'mandatory',
+      resources: ['references/video-reply.md', 'references/clarification.md'],
+    },
+    {
+      name: 'optional-research',
+      description: '按需提供研究辅助',
+      activation: 'autonomous',
+      resources: ['references/research.md'],
+    },
+  ]),
+  getMandatorySkillBodies: vi.fn(() => ['mandatory writing rules']),
+  loadSkillBody: vi.fn((name: string) => ({
+    success: true,
+    data: name === 'optional-research' ? 'autonomous skill body' : 'loaded skill body',
+  })),
+  readSkillResource: vi.fn((skill: string, path: string) => ({
+    success: true,
+    data: `${skill}:${path} resource body`,
+  })),
+}))
+
+vi.mock('../../src/skills/registry.js', () => skillMocks)
+
 vi.mock('../../src/tools/slang-understand.js', () => ({
   createSlangUnderstandTool: toolMocks.createSlangUnderstandTool,
 }))
@@ -80,6 +108,7 @@ import {
   handleTestConnection,
   postToPort,
   type PortSession,
+  resetMandatorySkillCache,
 } from '../../src/background/stream.js'
 import type { CSMessage, SWMessage } from '../../src/background/port-protocol.js'
 import type { ProviderConfig } from '../../src/lib/shared-types/provider.js'
@@ -102,7 +131,7 @@ function createSession(overrides: Partial<PortSession> = {}): PortSession {
   return { disconnected: false, abortController: null, ...overrides }
 }
 
-function streamOf(...parts: any[]): AsyncIterable<any> {
+function streamOf(...parts: unknown[]): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (const p of parts) yield p
@@ -111,10 +140,10 @@ function streamOf(...parts: any[]): AsyncIterable<any> {
 }
 
 function throwingStream(
-  parts: any[],
+  parts: unknown[],
   errorAt: number,
   err: unknown,
-): AsyncIterable<any> {
+): AsyncIterable<unknown> {
   return {
     async *[Symbol.asyncIterator]() {
       for (let i = 0; i < parts.length; i++) {
@@ -163,8 +192,9 @@ function makeProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
 
 function makeChatMsg(
   messages: ChatMessage[] = [],
+  conversationId = 'conv_test_1',
 ): Extract<CSMessage, { type: 'chat' }> {
-  return { type: 'chat', messages, conversationId: 'conv_test_1' }
+  return { type: 'chat', messages, conversationId }
 }
 
 function textDelta(text: string) {
@@ -211,6 +241,7 @@ function setupStreamResult(stream: AsyncIterable<any>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetMandatorySkillCache()
 })
 
 describe('stream mapping', () => {
@@ -365,7 +396,7 @@ describe('termination', () => {
 })
 
 describe('step limit', () => {
-  it('passes isStepCount(5) to streamText', async () => {
+  it('passes isStepCount(7) to streamText', async () => {
     setupValidProvider()
     const sentinel = () => false
     aiMocks.isStepCount.mockReturnValue(sentinel)
@@ -373,12 +404,12 @@ describe('step limit', () => {
     const session = createSession()
     setupStreamResult(streamOf(textDelta('a')))
     await handleChatMessage(port, session, makeChatMsg())
-    expect(aiMocks.isStepCount).toHaveBeenCalledWith(5)
+    expect(aiMocks.isStepCount).toHaveBeenCalledWith(7)
     expect(aiMocks.isStepCount).toHaveBeenCalledTimes(1)
     expect(aiMocks.streamText.mock.calls[0][0].stopWhen).toBe(sentinel)
   })
 
-  it('does not emit TOOL_ROUND_LIMIT when the fifth model step ends', async () => {
+  it('does not emit TOOL_ROUND_LIMIT when the seventh model step ends', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -396,6 +427,134 @@ describe('step limit', () => {
       posted.some((m) => m.type === 'error' && m.code === 'TOOL_ROUND_LIMIT'),
     ).toBe(false)
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+})
+
+describe('skill orchestration', () => {
+  it('preloads mandatory bodies before streamText and keeps autonomous content progressive', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const streamCallOrder = aiMocks.streamText.mock.invocationCallOrder[0]
+    const preloadCallOrder = skillMocks.getMandatorySkillBodies.mock.invocationCallOrder[0]
+    expect(preloadCallOrder).toBeLessThan(streamCallOrder)
+    const systemPrompt = aiMocks.streamText.mock.calls[0][0].system as string
+    expect(systemPrompt).toContain('optional-research')
+    expect(systemPrompt).toContain('按需提供研究辅助')
+    expect(systemPrompt).toContain('mandatory writing rules')
+    expect(systemPrompt).not.toContain('autonomous skill body')
+    expect(systemPrompt).not.toContain('resource body')
+    expect(posted[posted.length - 1]).toEqual({ type: 'done' })
+  })
+
+  it('reuses mandatory bodies by conversation ID while rebuilding each request prompt', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg())
+    await handleChatMessage(port, session, makeChatMsg())
+
+    expect(skillMocks.getMandatorySkillBodies).toHaveBeenCalledTimes(1)
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(2)
+    const firstPrompt = aiMocks.streamText.mock.calls[0][0].system as string
+    const secondPrompt = aiMocks.streamText.mock.calls[1][0].system as string
+    expect(firstPrompt).toContain('mandatory writing rules')
+    expect(secondPrompt).toContain('mandatory writing rules')
+    expect(firstPrompt).toContain('optional-research')
+    expect(secondPrompt).toContain('optional-research')
+    expect(posted.filter((message) => message.type === 'done')).toHaveLength(2)
+  })
+
+  it('does not share mandatory bodies between different conversation IDs', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+
+    await handleChatMessage(port, session, makeChatMsg([], 'conv_test_a'))
+    await handleChatMessage(port, session, makeChatMsg([], 'conv_test_b'))
+
+    expect(skillMocks.getMandatorySkillBodies).toHaveBeenCalledTimes(2)
+    expect(posted.filter((message) => message.type === 'done')).toHaveLength(2)
+  })
+
+  it('returns registry values from skill tools without adding auxiliary UI messages', async () => {
+    setupValidProvider()
+    const { port, posted } = createPort()
+    const session = createSession()
+    setupStreamResult(
+      streamOf(
+        toolCall('call_skill', 'load_skill', { name: 'optional-research' }),
+        toolResult('call_skill', 'load_skill', {
+          success: true,
+          data: 'autonomous skill body',
+        }),
+      ),
+    )
+
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const toolsArg = aiMocks.streamText.mock.calls[0][0].tools
+    await expect(
+      toolsArg.load_skill.execute({ name: 'optional-research' }),
+    ).resolves.toEqual({ success: true, data: 'autonomous skill body' })
+    await expect(
+      toolsArg.read_skill_file.execute({
+        skill: 'bili-writing-format',
+        path: 'references/video-reply.md',
+      }),
+    ).resolves.toEqual({
+      success: true,
+      data: 'bili-writing-format:references/video-reply.md resource body',
+    })
+    expect(posted.some((message) => message.type === 'videos')).toBe(false)
+    expect(posted.some((message) => message.type === 'insight')).toBe(false)
+    expect(posted).toContainEqual({
+      type: 'tool_result',
+      toolCallId: 'call_skill',
+      toolName: 'load_skill',
+      result: { success: true, data: 'autonomous skill body' },
+    })
+  })
+
+  it('passes structured registry errors through skill tools', async () => {
+    setupValidProvider()
+    skillMocks.loadSkillBody.mockReturnValueOnce({
+      success: false,
+      code: 'SKILL_NOT_FOUND',
+      error: '技能不存在',
+    })
+    skillMocks.readSkillResource.mockReturnValueOnce({
+      success: false,
+      code: 'RESOURCE_PATH_TRAVERSAL',
+      error: '资源路径不允许',
+    })
+    const { port } = createPort()
+    const session = createSession()
+    setupStreamResult(streamOf(textDelta('a')))
+    await handleChatMessage(port, session, makeChatMsg())
+
+    const toolsArg = aiMocks.streamText.mock.calls[0][0].tools
+    await expect(
+      toolsArg.load_skill.execute({ name: 'missing-skill' }),
+    ).resolves.toEqual({
+      success: false,
+      code: 'SKILL_NOT_FOUND',
+      error: '技能不存在',
+    })
+    await expect(
+      toolsArg.read_skill_file.execute({ skill: 'bili-writing-format', path: '../SKILL.md' }),
+    ).resolves.toEqual({
+      success: false,
+      code: 'RESOURCE_PATH_TRAVERSAL',
+      error: '资源路径不允许',
+    })
   })
 })
 
@@ -722,7 +881,7 @@ describe('tool auxiliary messages', () => {
     expect(posted[posted.length - 1]).toEqual({ type: 'done' })
   })
 
-  it('registers 5 tools with streamText', async () => {
+  it('registers existing video tools and skill tools with streamText', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
     const session = createSession()
@@ -736,9 +895,11 @@ describe('tool auxiliary messages', () => {
         'bilibili_search',
         'video_rerank',
         'ask_clarification',
+        'load_skill',
+        'read_skill_file',
       ]),
     )
-    expect(Object.keys(toolsArg)).toHaveLength(5)
+    expect(Object.keys(toolsArg)).toHaveLength(7)
   })
 
   it('creates and releases WorkingMemoryStore per session', async () => {

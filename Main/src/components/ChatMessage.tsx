@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { ChatMessage, AgentStep } from '../lib/shared-types/index.js'
 import type { AgentActivity } from '../content/chat-context.js'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import type { Components } from 'react-markdown'
 
 interface ChatMessageProps {
   message: ChatMessage;
@@ -20,6 +24,8 @@ const TOOL_NAME_LABELS: Record<string, string> = {
   bilibili_search: '搜索视频',
   video_rerank: '智能重排',
   ask_clarification: '追问澄清',
+  load_skill: '加载技能',
+  read_skill_file: '读取技能资源',
 };
 
 function toolLabel(name: string): string {
@@ -57,6 +63,17 @@ export function ChatMessageItem({
 
   // For the last assistant message that's being streamed, show streaming content
   const displayContent = isStreaming && isAssistant ? streamingContent : message.content;
+
+  // 流式渲染 debounce 150ms，减少频繁重排；非流式直接用 displayContent
+  const [debouncedDisplay, setDebouncedDisplay] = useState(displayContent);
+  useEffect(() => {
+    if (!(isStreaming && isAssistant)) return;
+    const timer = setTimeout(() => {
+      setDebouncedDisplay(displayContent);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [displayContent, isStreaming, isAssistant]);
+  const effectiveDisplay = (isStreaming && isAssistant) ? debouncedDisplay : displayContent;
   const reasoning = isStreaming && isAssistant ? streamingReasoning : (message.reasoning ?? '');
   const steps = isAssistant ? (message.steps ?? []) : [];
   const isThinkingLive = isStreaming && isAssistant && activity?.kind === 'thinking' && reasoning.length > 0;
@@ -151,7 +168,19 @@ export function ChatMessageItem({
 
         {displayContent && (
           <div className="bili-agent-message__bubble">
-            <p className="bili-agent-message__text">{displayContent}</p>
+            {isAssistant ? (
+              <div className="bili-agent-message__markdown">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+                  components={MARKDOWN_COMPONENTS}
+                >
+                  {effectiveDisplay}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <p className="bili-agent-message__text">{displayContent}</p>
+            )}
           </div>
         )}
 
@@ -184,10 +213,29 @@ function activityLabel(activity: AgentActivity | null): string {
     case 'thinking':
       return '正在思考…';
     case 'tool':
-      return activity.label ? `正在${activity.label}…` : '正在调用工具…';
+      return activity.label ? `正在${toolLabel(activity.label)}…` : '正在调用工具…';
     case 'responding':
       return '正在回复…';
   }
+}
+
+// rehype-sanitize 自定义配置：仅允许 http/https 链接
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: ['http', 'https'],
+  },
+}
+
+// 自定义 Markdown 组件：安全约束
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  ),
+  img: () => null,
 }
 
 function formatTime(timestamp: number): string {
