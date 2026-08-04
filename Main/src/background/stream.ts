@@ -448,7 +448,11 @@ export async function handleChatMessage(
   session.abortReason = null
 
   // 合并手动取消与总超时；监听器在 finally 中移除，避免正常结束后误标记超时。
-  const timeoutSignal = AbortSignal.timeout(CHAT_STREAM_TIMEOUT_MS)
+  // 用 setTimeout + AbortController 替代 AbortSignal.timeout()，
+  // 使定时器可在 finally 中取消，避免 release 期间超时竞态（N-2）。
+  const timeoutController = new AbortController()
+  const timeoutId = setTimeout(() => timeoutController.abort(), CHAT_STREAM_TIMEOUT_MS)
+  const timeoutSignal = timeoutController.signal
   const handleTimeout = (): void => {
     if (session.abortReason !== null) return
     session.abortReason = 'timeout'
@@ -566,8 +570,10 @@ export async function handleChatMessage(
       })
     }
   } finally {
-    combinedAbort.cleanup()
+    // 先清理超时信号和监听器，再执行 release，避免 release 期间超时竞态（N-2）
+    clearTimeout(timeoutId)
     timeoutSignal.removeEventListener('abort', handleTimeout)
+    combinedAbort.cleanup()
     // 会话结束清理 WorkingMemory（3.3 §2.1 末尾 / 3.7 §3.1 资源释放）
     // 失败静默，不阻断 done 推送
     try {
