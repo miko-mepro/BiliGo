@@ -3,7 +3,7 @@
   "name": "merge-bugfix-into-agentprompt",
   "title": "将 bugfix 分支合并到当前分支",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

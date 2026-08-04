@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/08-04-merge-bugfix-into-agentprompt/prd.md", "reason": "合并目标、范围与双分支内容保留验收条件"}
+{"file": ".trellis/spec/shared/git-conventions.md", "reason": "合并提交与 Git 验证约定"}
+{"file": ".trellis/spec/frontend/quality.md", "reason": "冲突代码合并后的质量与验证标准"}
+{"file": ".trellis/spec/frontend/ipc-electron.md", "reason": "stream.ts 跨进程行为审查参考"}
