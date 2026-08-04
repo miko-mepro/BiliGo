@@ -457,7 +457,7 @@ cd Main && npx playwright show-trace test-results/<trace-folder>/trace.zip
 
 ## 11. 完成状态
 
-**当前状态**：pending
+**当前状态**：completed
 
 状态变更条件：
 - `pending` -> `in_progress`：阶段0 恢复 E2E 能力后，开始执行挂载验证
