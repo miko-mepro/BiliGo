@@ -186,8 +186,12 @@ export function TestConnectionButton({
 				request.settle({ ok: false, error: "连接已断开" });
 			};
 			activeRequestRef.current = request;
-			port.onMessage.addListener(request.onMessage);
-			port.onDisconnect.addListener(request.onDisconnect);
+			try {
+				port.onMessage.addListener(request.onMessage);
+				port.onDisconnect.addListener(request.onDisconnect);
+			} catch {
+				request.settle({ ok: false, error: "连接已断开" });
+			}
 		});
 
 		/**
