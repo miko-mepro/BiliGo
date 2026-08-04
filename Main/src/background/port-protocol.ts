@@ -11,8 +11,15 @@ export type SWMessage =
   // videos 消息携带批次归属（S-3）：
   // batchId 标识这组视频属于哪一次搜索，video_rerank 的重排推送复用同一 batchId，
   // 使 content script 能区分「同批次的重排更新」与「新搜索的新批次」。
-  // reranked 标记本次推送是否为重排结果，供 S-4 判断排序优先级。
-  | { type: 'videos'; videos: BilibiliVideoCard[]; batchId?: string; reranked?: boolean }
+  // reranked 标记本次推送是否为重排结果，供 S-4 判断排序优先级；
+  // rerankPending 标记当前批次是否确实等待 rerank，供前端延迟视频网格展示。
+  | {
+      type: 'videos'
+      videos: BilibiliVideoCard[]
+      batchId?: string
+      reranked?: boolean
+      rerankPending?: boolean
+    }
   | { type: 'insight'; kind: InsightKind; data: unknown }
   | { type: 'done' }
   | { type: 'error'; message: string; code?: string }
@@ -52,6 +59,7 @@ export function isSWMessage(value: unknown): value is SWMessage {
         && (record.batchId === undefined
           || (typeof record.batchId === 'string' && record.batchId.length > 0))
         && (record.reranked === undefined || typeof record.reranked === 'boolean')
+        && (record.rerankPending === undefined || typeof record.rerankPending === 'boolean')
     case 'insight':
       return ['understanding', 'expansion', 'rerank', 'clarification'].includes(
         String(record.kind),

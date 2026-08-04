@@ -489,6 +489,21 @@ describe('step limit', () => {
 })
 
 describe('disconnect', () => {
+  it('swallows synchronous postMessage failures and marks the session disconnected', () => {
+    const session = createSession()
+    const failingPort = {
+      postMessage: vi.fn(() => {
+        throw new Error('Extension context invalidated')
+      }),
+    } as unknown as chrome.runtime.Port
+
+    expect(() => postToPort(failingPort, session, { type: 'done' })).not.toThrow()
+    expect(session.disconnected).toBe(true)
+
+    postToPort(failingPort, session, { type: 'done' })
+    expect(failingPort.postMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('silently drops messages after port disconnect', async () => {
     setupValidProvider()
     const { port, posted } = createPort()
@@ -676,6 +691,7 @@ describe('tool auxiliary messages', () => {
       videos,
       batchId: 'search_call_s1',
       reranked: false,
+      rerankPending: false,
     })
     expect(posted).toContainEqual({
       type: 'tool_result',
@@ -740,6 +756,7 @@ describe('tool auxiliary messages', () => {
       ],
       batchId: 'rerank_call_r1',
       reranked: true,
+      rerankPending: false,
     })
     expect(posted).toContainEqual({
       type: 'tool_result',
@@ -797,7 +814,9 @@ describe('tool auxiliary messages', () => {
     expect(videoMsgs[1].batchId).toBe('search_call_s1')
     // 首次推送未重排，第二次标记为重排结果
     expect(videoMsgs[0].reranked).toBe(false)
+    expect(videoMsgs[0].rerankPending).toBe(false)
     expect(videoMsgs[1].reranked).toBe(true)
+    expect(videoMsgs[1].rerankPending).toBe(false)
     // 重排后顺序按 rerank items
     expect(videoMsgs[1].videos?.map((v: { bvid: string }) => v.bvid)).toEqual(['BV2', 'BV1'])
   })

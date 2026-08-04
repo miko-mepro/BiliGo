@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const aiMocks = vi.hoisted(() => ({
   generateObject: vi.fn(),
-  generateText: vi.fn(),
+  streamText: vi.fn(),
 }))
 
 vi.mock('ai', () => ({
   generateObject: aiMocks.generateObject,
-  generateText: aiMocks.generateText,
+  streamText: aiMocks.streamText,
 }))
 
 const settingsMocks = vi.hoisted(() => ({
@@ -77,6 +77,14 @@ describe('callLlmForJson fallback path', () => {
     return [{ role: 'user', content, timestamp: 0 }]
   }
 
+  function textStream(...chunks: string[]) {
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) yield chunk
+      },
+    }
+  }
+
   function setupActiveProvider() {
     settingsMocks.readBiliAgentSettings.mockResolvedValue({
       providers: [
@@ -106,35 +114,35 @@ describe('callLlmForJson fallback path', () => {
     const result = await callLlmForJson(makeMessages('hi'))
     expect(result).toBeNull()
     expect(aiMocks.generateObject).not.toHaveBeenCalled()
-    expect(aiMocks.generateText).not.toHaveBeenCalled()
+    expect(aiMocks.streamText).not.toHaveBeenCalled()
   })
 
   it('falls back to generateText + parseJsonFromText when generateObject throws', async () => {
     setupActiveProvider()
     aiMocks.generateObject.mockRejectedValue(new Error('unsupported'))
-    aiMocks.generateText.mockResolvedValue({ text: '```json\n{"x":1}\n```' })
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('```json\n', '{"x":1}', '\n```') })
 
     const result = await callLlmForJson(makeMessages('hi'), z.object({ x: z.number() }))
 
     expect(aiMocks.generateObject).toHaveBeenCalledTimes(1)
-    expect(aiMocks.generateText).toHaveBeenCalledTimes(1)
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(1)
     expect(result).toEqual({ x: 1 })
   })
 
-  it('falls back to generateText when no schema is provided', async () => {
+  it('uses streamText when no schema is provided', async () => {
     setupActiveProvider()
-    aiMocks.generateText.mockResolvedValue({ text: '{"k":"v"}' })
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('{"k":"v"}') })
 
     const result = await callLlmForJson(makeMessages('hi'))
 
     expect(aiMocks.generateObject).not.toHaveBeenCalled()
-    expect(aiMocks.generateText).toHaveBeenCalledTimes(1)
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(1)
     expect(result).toEqual({ k: 'v' })
   })
 
-  it('returns null when generateText returns empty text', async () => {
+  it('returns null when the text stream is empty', async () => {
     setupActiveProvider()
-    aiMocks.generateText.mockResolvedValue({ text: '   ' })
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('   ') })
 
     const result = await callLlmForJson(makeMessages('hi'))
 
@@ -143,16 +151,25 @@ describe('callLlmForJson fallback path', () => {
 
   it('passes system message via system option and excludes it from messages', async () => {
     setupActiveProvider()
-    aiMocks.generateText.mockResolvedValue({ text: '{"ok":true}' })
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('{"ok":true}') })
 
     await callLlmForJson([
       { role: 'system', content: 'be strict', timestamp: 0 },
       { role: 'user', content: 'q', timestamp: 0 },
     ])
 
-    const callOpts = aiMocks.generateText.mock.calls[0][0]
+    const callOpts = aiMocks.streamText.mock.calls[0][0]
     expect(callOpts.system).toBe('be strict')
     expect(callOpts.messages).toHaveLength(1)
     expect(callOpts.messages[0].role).toBe('user')
+  })
+
+  it('accepts a caller-provided inactivity timeout', async () => {
+    setupActiveProvider()
+    aiMocks.streamText.mockReturnValue({ textStream: textStream('{"ok":true}') })
+
+    await callLlmForJson(makeMessages('hi'), undefined, { inactivityTimeoutMs: 1234 })
+
+    expect(aiMocks.streamText.mock.calls[0][0].abortSignal).toBeInstanceOf(AbortSignal)
   })
 })

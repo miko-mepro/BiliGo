@@ -77,6 +77,8 @@ export interface VideoBatch {
   receivedAt: number;
   /** 是否已经过 video_rerank 重排。供 S-4 判断客户端排序是否应让位于后端重排顺序 */
   reranked: boolean;
+  /** 当前批次是否正在等待 rerank；历史批次和无需 rerank 的结果为 false/缺省 */
+  rerankPending?: boolean;
 }
 
 export interface SlangUnderstandResult {

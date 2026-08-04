@@ -567,6 +567,7 @@ export function consumeSWMessage(
           anchorTimestamp,
           receivedAt: existing?.receivedAt ?? Date.now(),
           reranked: msg.reranked === true,
+          rerankPending: msg.rerankPending === true,
         },
       })
       break

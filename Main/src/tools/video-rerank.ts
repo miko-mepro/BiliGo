@@ -8,13 +8,19 @@ import type {
   WorkingMemory,
 } from '../lib/shared-types/index.js'
 import { fetchVideoTags, type VideoTag } from '../lib/bilibili-client/tags.js'
-import { callLlmForJson as defaultCallLlmForJson } from './llm-json.js'
+import {
+  callLlmForJson as defaultCallLlmForJson,
+  type LlmJsonOptions,
+} from './llm-json.js'
 
 /**
  * 重排候选硬上限（3.3 §6.3）。
  * 超过此值的输入会被截断到前 30 条，`trimmed` 记录截断数。
  */
 const MAX_CANDIDATES = 30
+
+/** rerank 文本流连续无新输出的超时阈值，与 llm-json 的默认策略保持一致。 */
+export const RERANK_LLM_INACTIVITY_TIMEOUT_MS = 45_000
 
 /** memoryStore 接口：traceId 已在工厂闭包中绑定（3.7 §6.1 仅 { get, update }）。 */
 export interface RerankMemoryStore {
@@ -25,6 +31,7 @@ export interface RerankMemoryStore {
 /** LLM 调用器类型，便于在测试中注入模型/API 替身。 */
 export type LlmJsonCaller = (
   messages: ChatMessage[],
+  options?: LlmJsonOptions,
 ) => Promise<{ items: RerankItem[] } | null>
 
 /** video_rerank 工厂依赖：memoryStore 必填，callLlmForJson 可选（默认走 llm-json.js）。 */
@@ -43,7 +50,8 @@ export const videoRerankInputSchema = z.object({
 
 /** video_rerank 工具工厂：返回 AI SDK tool() 对象。 */
 export function createVideoRerankTool(deps: VideoRerankDeps) {
-  const callLlm = deps.callLlmForJson ?? (defaultCallLlmForJson as unknown as LlmJsonCaller)
+  const callLlm: LlmJsonCaller = deps.callLlmForJson
+    ?? ((messages, options) => defaultCallLlmForJson(messages, undefined, options))
 
   return tool({
     description:
@@ -80,7 +88,8 @@ export async function executeVideoRerank(
   intent: string,
   deps: VideoRerankDeps,
 ): Promise<RerankResult> {
-  const callLlm = deps.callLlmForJson ?? (defaultCallLlmForJson as unknown as LlmJsonCaller)
+  const callLlm: LlmJsonCaller = deps.callLlmForJson
+    ?? ((messages, options) => defaultCallLlmForJson(messages, undefined, options))
   const truncated = videos.slice(0, MAX_CANDIDATES)
   const trimmed = Math.max(0, videos.length - MAX_CANDIDATES)
 
@@ -118,7 +127,9 @@ export async function executeVideoRerank(
       timestamp: now,
     }
 
-    const parsed = await callLlm([message])
+    const parsed = await callLlm([message], {
+      inactivityTimeoutMs: RERANK_LLM_INACTIVITY_TIMEOUT_MS,
+    })
 
     if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
       throw new Error('LLM returned empty rerank items')

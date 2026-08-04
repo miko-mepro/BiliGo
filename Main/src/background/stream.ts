@@ -69,7 +69,13 @@ export interface PortSession extends PortState {
 
 export function postToPort(port: chrome.runtime.Port, state: PortState, msg: SWMessage): void {
   if (state.disconnected) return
-  port.postMessage(msg)
+  try {
+    port.postMessage(msg)
+  } catch {
+    // Port 失效时 Chrome 可能晚于实际断线才触发 onDisconnect；发送失败立即收敛状态，
+    // 防止 rerank 的第二次辅助推送和会话结束消息继续把异常抛到调用栈顶层。
+    state.disconnected = true
+  }
 }
 
 export function toModelMessages(messages: ChatMessage[]): ModelMessage[] {
@@ -301,6 +307,7 @@ function postToolAuxiliaryMessages(
         videos: output as BilibiliVideoCard[],
         batchId,
         reranked: false,
+        rerankPending: Array.isArray(output) && output.length > 3,
       })
       break
     }
@@ -338,6 +345,7 @@ function postToolAuxiliaryMessages(
           videos: reordered,
           batchId,
           reranked: true,
+          rerankPending: false,
         })
       }
       break

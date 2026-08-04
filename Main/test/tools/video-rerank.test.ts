@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   executeVideoRerank,
+  RERANK_LLM_INACTIVITY_TIMEOUT_MS,
   type RerankMemoryStore,
   type LlmJsonCaller,
 } from '../../src/tools/video-rerank.js'
@@ -147,6 +148,9 @@ describe('video_rerank / tags', () => {
     expect(result.strategy).toBe('llm')
     // LLM 仍被调用
     expect(llmMocks.callLlmForJson).toHaveBeenCalledTimes(1)
+    expect(llmMocks.callLlmForJson.mock.calls[0][1]).toEqual({
+      inactivityTimeoutMs: RERANK_LLM_INACTIVITY_TIMEOUT_MS,
+    })
     // 失败的视频按空标签处理，不阻断
     expect(result.items).toHaveLength(2)
   })
