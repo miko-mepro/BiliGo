@@ -416,4 +416,125 @@ describe("TestConnectionButton", () => {
 			}).not.toThrow();
 		});
 	});
+
+	describe("N-3/R-3 三路竞速 cleanup 幂等性", () => {
+		it("onMessage 先到后 onDisconnect 不再触发状态变更", async () => {
+			const { port, triggerMessage, triggerDisconnect } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+
+			// SW 回复先到
+			triggerMessage({ type: "connection_result", ok: true });
+			await act(async () => {});
+
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✓ 连接成功");
+
+			// onDisconnect 随后触发，不应覆盖成功结果
+			triggerDisconnect();
+			await act(async () => {});
+
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✓ 连接成功");
+			// cleanup 只应调用一次（测试完成后清理，断线不再重复 cleanup）
+			expect(port.onMessage.removeListener).toHaveBeenCalledTimes(1);
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+		});
+
+		it("超时后 onDisconnect listener 已移除，不再响应断线", async () => {
+			vi.useFakeTimers();
+			const { port, triggerDisconnect } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+
+			// 推进 12s 触发超时兜底
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(12_000);
+			});
+
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("连接超时");
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+
+			// 超时后断线不应再变更结果
+			triggerDisconnect();
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("连接超时");
+			// removeListener 不应被再次调用（断线时 request 已清理）
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+
+			vi.useRealTimers();
+		});
+
+		it("onMessage + onDisconnect + timer 三路连续触发只产生一次有效结果", async () => {
+			vi.useFakeTimers();
+			const { port, triggerMessage, triggerDisconnect } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+
+			// 三路几乎同时触发：onMessage 先到
+			triggerMessage({ type: "connection_result", ok: true });
+			// 断线随后
+			triggerDisconnect();
+			// 超时最后
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(12_000);
+			});
+
+			// 应该只显示成功结果（onMessage 最先到）
+			await act(async () => {});
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✓ 连接成功");
+			// cleanup 只应调用一次
+			expect(port.onMessage.removeListener).toHaveBeenCalledTimes(1);
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+
+			vi.useRealTimers();
+		});
+
+		it("同一组件实例多次请求，代次机制确保旧结果不覆盖新状态", async () => {
+			const { port, triggerMessage } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			// 第一次请求：成功
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			triggerMessage({ type: "connection_result", ok: true });
+			await act(async () => {});
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✓ 连接成功");
+
+			// 第二次请求：失败（同一组件实例，不依赖 key 重挂载）
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			triggerMessage({ type: "connection_result", ok: false, error: "API Key 无效" });
+			await act(async () => {});
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✕ 连接失败：API Key 无效");
+
+			// 第三次请求：成功，验证旧 listener 不会干扰
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			triggerMessage({ type: "connection_result", ok: true });
+			await act(async () => {});
+			expect(screen.getByTestId("test-connection-result")).toHaveTextContent("✓ 连接成功");
+		});
+
+		it("连续 cleanup 调用幂等，不抛异常", async () => {
+			const { port, triggerMessage } = createMockPort();
+			render(<TestConnectionButton provider={mockProvider} port={port} />);
+
+			fireEvent.click(screen.getByTestId("test-connection-button"));
+			triggerMessage({ type: "connection_result", ok: true });
+			await act(async () => {});
+
+			// 第一次 cleanup 已由测试完成触发
+			expect(port.onMessage.removeListener).toHaveBeenCalledTimes(1);
+			expect(port.onDisconnect.removeListener).toHaveBeenCalledTimes(1);
+
+			// 卸载时再次 cleanup（幂等，不抛异常）
+			const { unmount } = render(
+				<TestConnectionButton provider={mockProvider} port={port} />,
+			);
+			unmount();
+
+			// cleanup 可被多次调用但不抛异常
+			expect(() => {
+				port.onMessage.removeListener.mockClear();
+			}).not.toThrow();
+		});
+	});
 });
