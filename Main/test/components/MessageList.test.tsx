@@ -29,6 +29,8 @@ let mockState = {
   isLoading: false,
   error: null,
   streamingContent: '',
+  // S-2 缺口测试需要：流式推理内容
+  streamingReasoning: '',
   conversationId: 'test',
 };
 
@@ -62,6 +64,7 @@ function resetMocks() {
     isLoading: false,
     error: null,
     streamingContent: '',
+    streamingReasoning: '',
     conversationId: 'test',
   };
   mockInsights = {
@@ -73,7 +76,11 @@ function resetMocks() {
 }
 
 /** 构造一张视频卡片，只需指定 bvid 与标题，其余字段用占位值 */
-function makeVideo(bvid: string, title: string): BilibiliVideoCard {
+function makeVideo(
+  bvid: string,
+  title: string,
+  overrides: Partial<BilibiliVideoCard> = {},
+): BilibiliVideoCard {
   return {
     bvid,
     aid: 1,
@@ -87,6 +94,7 @@ function makeVideo(bvid: string, title: string): BilibiliVideoCard {
     pubdate: 1234567890,
     tag: 'tag',
     description: 'desc',
+    ...overrides,
   };
 }
 
@@ -106,6 +114,7 @@ describe('MessageList', () => {
   });
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it('renders insights mixed with messages (1 understanding + 1 message)', () => {
@@ -368,6 +377,377 @@ describe('MessageList', () => {
       };
 
       expect(() => render(<MessageList />)).not.toThrow();
+    });
+  });
+
+  describe('自动滚动保护（S-2）', () => {
+    function getMessageList(container: HTMLElement): HTMLDivElement {
+      return container.querySelector('.bili-agent-message-list') as HTMLDivElement;
+    }
+
+    function setScrollMetrics(
+      element: HTMLDivElement,
+      values: { scrollTop: number; scrollHeight: number; clientHeight: number },
+    ): void {
+      for (const [key, value] of Object.entries(values)) {
+        Object.defineProperty(element, key, { configurable: true, value });
+      }
+    }
+
+    it('用户在底部时，流式内容更新会跟随滚动', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { rerender } = render(<MessageList />);
+      vi.clearAllMocks();
+      vi.advanceTimersByTime(100);
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    it('用户上拉后，流式内容更新不会把视图拉回底部', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      vi.clearAllMocks();
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      vi.advanceTimersByTime(100);
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it('用户滚回底部后，自动滚动恢复', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      setScrollMetrics(messageList, { scrollTop: 600, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      vi.clearAllMocks();
+      vi.advanceTimersByTime(100);
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    it('流式高频更新在节流窗口内只触发一次滚动', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { rerender } = render(<MessageList />);
+      vi.clearAllMocks();
+      vi.advanceTimersByTime(100);
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingContent: '第三段' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    // 缺口1场景B：用户上拉后收到 streamingReasoning 更新时，scrollIntoView 不应被调用
+    it('用户上拉后收到 streamingReasoning 更新，不强制滚回底部', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+        streamingReasoning: '推理一',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      vi.clearAllMocks();
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      vi.advanceTimersByTime(100);
+      // 仅更新 streamingReasoning，验证用户上拉保护对其同样生效
+      mockState = { ...mockState, streamingReasoning: '推理二' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    // 缺口1场景C：用户上拉后收到 videoBatches 更新（派发新批次）时，scrollIntoView 不应被调用
+    it('用户上拉后收到 videoBatches 更新，不强制滚回底部', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      vi.clearAllMocks();
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      vi.advanceTimersByTime(100);
+      // 派发新批次，验证用户上拉保护对视频批次更新同样生效
+      mockState = {
+        ...mockState,
+        videoBatches: [makeBatch('b1', [makeVideo('BV1', '新视频')], 2000)],
+      };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    // 缺口2场景B：多段 reasoning 更新在 100ms 节流窗口内只触发一次滚动
+    it('多段 reasoning 更新在节流窗口内只触发一次滚动', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+        streamingReasoning: '推理一',
+      };
+
+      const { rerender } = render(<MessageList />);
+      vi.clearAllMocks();
+      vi.advanceTimersByTime(100);
+      // 连续 5 次 reasoning 更新，节流窗口内只允许首次触发滚动
+      mockState = { ...mockState, streamingReasoning: '推理二' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理三' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理四' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理五' };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    // 缺口2场景C：chunk + reasoning + videos 混合更新在节流窗口内只触发一次滚动
+    it('chunk + reasoning + videos 混合更新在节流窗口内只触发一次滚动', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+        streamingReasoning: '推理一',
+      };
+
+      const { rerender } = render(<MessageList />);
+      vi.clearAllMocks();
+      vi.advanceTimersByTime(100);
+      // 依次触发 streamingContent、streamingReasoning、videoBatches、streamingContent、videoBatches 混合更新
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理二' };
+      rerender(<MessageList />);
+      mockState = {
+        ...mockState,
+        videoBatches: [makeBatch('b1', [makeVideo('BV1', '视频一')], 2000)],
+      };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingContent: '第三段' };
+      rerender(<MessageList />);
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [makeVideo('BV1', '视频一'), makeVideo('BV2', '视频二')], 2000),
+        ],
+      };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    });
+
+    // 缺口2场景D：用户上拉期间 chunk、reasoning、videos 更新均不触发 scrollIntoView
+    it('用户上拉期间 chunk、reasoning、videos 更新均不触发滚动', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+        streamingReasoning: '推理一',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      vi.clearAllMocks();
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      vi.advanceTimersByTime(100);
+
+      // 用户上拉期间，streamingContent 更新 3 次，均不应触发滚动
+      mockState = { ...mockState, streamingContent: '第二段' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingContent: '第三段' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingContent: '第四段' };
+      rerender(<MessageList />);
+
+      // streamingReasoning 更新 3 次，均不应触发滚动
+      mockState = { ...mockState, streamingReasoning: '推理二' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理三' };
+      rerender(<MessageList />);
+      mockState = { ...mockState, streamingReasoning: '推理四' };
+      rerender(<MessageList />);
+
+      // videoBatches 更新 3 次（逐批追加），均不应触发滚动
+      mockState = {
+        ...mockState,
+        videoBatches: [makeBatch('b1', [makeVideo('BV1', '视频一')], 2000)],
+      };
+      rerender(<MessageList />);
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [makeVideo('BV1', '视频一'), makeVideo('BV2', '视频二')], 2000),
+        ],
+      };
+      rerender(<MessageList />);
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [makeVideo('BV1', '视频一'), makeVideo('BV2', '视频二'), makeVideo('BV3', '视频三')],
+            2000,
+          ),
+        ],
+      };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it('用户上拉后流结束，不强制滚回底部', () => {
+      vi.useFakeTimers();
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '回答', timestamp: 1000 }],
+        isLoading: true,
+        streamingContent: '第一段',
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      const messageList = getMessageList(container);
+      vi.clearAllMocks();
+      setScrollMetrics(messageList, { scrollTop: 0, scrollHeight: 1000, clientHeight: 400 });
+      fireEvent.scroll(messageList);
+      mockState = { ...mockState, isLoading: false };
+      rerender(<MessageList />);
+
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('客户端重排顺序（S-4）', () => {
+    it('rerank 批次默认保持后端顺序，不被播放量排序覆盖', () => {
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '重排完成', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV2', '后端第一', { play: 100 }),
+              makeVideo('BV1', '播放量第一', { play: 900 }),
+            ],
+            1000,
+            true,
+          ),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      const text = container.textContent ?? '';
+
+      expect(text.indexOf('后端第一')).toBeLessThan(text.indexOf('播放量第一'));
+    });
+
+    it('用户手动选择播放量后，可以覆盖 rerank 顺序', () => {
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '重排完成', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch(
+            'b1',
+            [
+              makeVideo('BV2', '后端第一', { play: 100 }),
+              makeVideo('BV1', '播放量第一', { play: 900 }),
+            ],
+            1000,
+            true,
+          ),
+        ],
+      };
+
+      const { container } = render(<MessageList />);
+      fireEvent.change(screen.getByLabelText(/排序/i), { target: { value: 'play' } });
+      const text = container.textContent ?? '';
+
+      expect(text.indexOf('播放量第一')).toBeLessThan(text.indexOf('后端第一'));
+    });
+
+    it('同一批次 rerank 更新时保留用户手动排序', () => {
+      mockState = {
+        ...mockState,
+        messages: [{ role: 'assistant', content: '搜索结果', timestamp: 1000 }],
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV1', '发布时间第一', { pubdate: 2000, play: 100 }),
+            makeVideo('BV2', '播放量第一', { pubdate: 1000, play: 900 }),
+          ], 1000),
+        ],
+      };
+
+      const { container, rerender } = render(<MessageList />);
+      fireEvent.change(screen.getByLabelText(/排序/i), { target: { value: 'pubdate' } });
+      mockState = {
+        ...mockState,
+        videoBatches: [
+          makeBatch('b1', [
+            makeVideo('BV2', '播放量第一', { pubdate: 1000, play: 900 }),
+            makeVideo('BV1', '发布时间第一', { pubdate: 2000, play: 100 }),
+          ], 1000, true),
+        ],
+      };
+      rerender(<MessageList />);
+      const text = container.textContent ?? '';
+
+      expect(text.indexOf('发布时间第一')).toBeLessThan(text.indexOf('播放量第一'));
     });
   });
 });
