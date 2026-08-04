@@ -35,8 +35,11 @@
 
 | 日志 | 问题编号 | 严重程度 | 状态 |
 | --- | --- | --- | --- |
-| [R-1 历史标题类型校验](./R-1-历史标题类型校验.md) | R-1 | CRITICAL | needs_review |
-| [S-3 视频批次归属模型](./S-3-视频批次归属模型.md) | S-3 | HIGH | needs_review |
-| [阶段0 E2E 测试环境](./阶段0-E2E测试环境.md) | — | — | needs_review |
+| [R-1 历史标题类型校验](./R-1-历史标题类型校验.md) | R-1 | CRITICAL | completed |
+| [N-2 聊天流总超时](./N-2-聊天流总超时.md) | N-2 | HIGH | needs_review |
+| [S-2 自动滚动保护](./S-2-自动滚动保护.md) | S-2 | HIGH | needs_review |
+| [S-3 视频批次归属模型](./S-3-视频批次归属模型.md) | S-3 | HIGH | completed |
+| [S-4 客户端重排顺序](./S-4-客户端重排顺序.md) | S-4 | HIGH | needs_review |
+| [阶段0 E2E 测试环境](./阶段0-E2E测试环境.md) | — | — | completed |
 
 状态以 `docs/修复方案/修复状态追踪.md` 为准，本表仅为索引快照。
