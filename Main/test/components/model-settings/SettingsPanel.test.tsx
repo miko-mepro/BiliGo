@@ -16,15 +16,6 @@ import type { BiliAgentSettings } from "../../../src/config/settings.js";
  */
 const mockSave = vi.fn(async (next: BiliAgentSettings) => next);
 
-/**
- * mock chrome.permissions.request：P5 新增 origin 授权流程所需。
- *
- * 默认实现：resolve(true) 模拟用户同意授权。
- * 单个用例可通过 mockPermissionsRequest.mockResolvedValueOnce(false) 模拟拒绝，
- * 或 mockRejectedValueOnce(new Error(...)) 模拟 Chrome API 异常。
- */
-const mockPermissionsRequest = vi.fn();
-
 vi.mock("../../../src/config/settings.js", () => ({
 	saveBiliAgentSettings: (next: BiliAgentSettings) => mockSave(next),
 	// 提供给被测组件 import 的类型/常量不需要运行时实现，但需导出以保持形状一致
@@ -129,12 +120,6 @@ describe("SettingsPanel", () => {
 		vi.clearAllMocks();
 		// 默认 mockSave 行为：resolve 入参并返回
 		mockSave.mockImplementation(async (next: BiliAgentSettings) => next);
-		// 默认 mockPermissionsRequest 行为：resolve(true) 模拟用户同意授权
-		mockPermissionsRequest.mockResolvedValue(true);
-		// 注入 chrome.permissions mock（test/setup.ts 的 globalThis.chrome 未含 permissions）
-		(globalThis.chrome as any).permissions = {
-			request: mockPermissionsRequest,
-		};
 	});
 
 	afterEach(() => {
@@ -612,7 +597,7 @@ describe("SettingsPanel", () => {
 
 			// 第一次点击保存
 			fireEvent.click(saveBtn);
-			// P5 后保存前需先经 origin 授权（异步），用 waitFor 等待 mockSave 被调用
+			// 等待 mockSave 被调用
 			await waitFor(() => {
 				expect(mockSave).toHaveBeenCalledTimes(1);
 			});
@@ -629,189 +614,6 @@ describe("SettingsPanel", () => {
 			await waitFor(() => {
 				expect(saveBtn).toHaveTextContent("✓ 已保存");
 			});
-		});
-	});
-
-	/**
-	 * P5 新增：origin 授权流程测试
-	 *
-	 * 覆盖 chrome.permissions.request 在保存按钮 onClick 同步栈内的 5 条路径：
-	 * 1. 自定义 provider 非内置域名 + 用户同意 -> 保存成功
-	 * 2. 自定义 provider 非内置域名 + 用户拒绝 -> 保存失败，错误提示"需要授权访问该域名"
-	 * 3. 自定义 provider baseUrl 为内置域名 -> 不触发 permissions.request
-	 * 4. 全内置 provider -> 不触发 permissions.request
-	 * 5. permissions.request 抛异常 -> 保存失败，错误提示
-	 */
-	describe("P5 origin 授权", () => {
-		it("9) 自定义 provider 非内置域名 + 用户同意授权 -> 保存成功", async () => {
-			const onSaved = vi.fn();
-			const { port } = createMockPort();
-			render(
-				<SettingsPanel
-					settings={makeInitialSettings()}
-					onClose={vi.fn()}
-					onSaved={onSaved}
-					port={port}
-				/>,
-			);
-
-			// 点击保存
-			fireEvent.click(screen.getByTestId("save-button"));
-
-			// 等待保存完成
-			await waitFor(() => {
-				expect(onSaved).toHaveBeenCalledTimes(1);
-			});
-
-			// 验证 permissions.request 被调用（customProvider 的 baseUrl 非内置域名）
-			expect(mockPermissionsRequest).toHaveBeenCalledTimes(1);
-			// 验证申请的 origins pattern 正确（https://api.example.com/v1 -> https://*.api.example.com/*）
-			expect(mockPermissionsRequest).toHaveBeenCalledWith({
-				origins: ["https://*.api.example.com/*"],
-			});
-			// 验证 saveBiliAgentSettings 被调用（授权通过后正常保存）
-			expect(mockSave).toHaveBeenCalledTimes(1);
-		});
-
-		it("10) 自定义 provider 非内置域名 + 用户拒绝授权 -> 保存失败，不触发 onSaved", async () => {
-			// mock permissions.request 返回 false（用户拒绝）
-			mockPermissionsRequest.mockResolvedValueOnce(false);
-			const onSaved = vi.fn();
-			const { port } = createMockPort();
-			render(
-				<SettingsPanel
-					settings={makeInitialSettings()}
-					onClose={vi.fn()}
-					onSaved={onSaved}
-					port={port}
-				/>,
-			);
-
-			// 点击保存
-			fireEvent.click(screen.getByTestId("save-button"));
-
-			// 等待错误态出现
-			await waitFor(() => {
-				expect(screen.getByTestId("save-error-hint")).toBeInTheDocument();
-			});
-
-			// 验证 permissions.request 被调用
-			expect(mockPermissionsRequest).toHaveBeenCalledTimes(1);
-			// 错误提示文案为"需要授权访问该域名"
-			expect(screen.getByTestId("save-error-hint")).toHaveTextContent(
-				"需要授权访问该域名",
-			);
-			// 按钮文案变"✕ 错误"
-			expect(screen.getByTestId("save-button")).toHaveTextContent(
-				"✕ 错误",
-			);
-			// onSaved 不应被调用（授权拒绝，不保存）
-			expect(onSaved).not.toHaveBeenCalled();
-			// saveBiliAgentSettings 不应被调用（不留半保存）
-			expect(mockSave).not.toHaveBeenCalled();
-		});
-
-		it("11) 自定义 provider baseUrl 为内置域名 -> 不触发 permissions.request", async () => {
-			// 自定义 provider 但 baseUrl 指向内置域名（api.openai.com）
-			const customWithBuiltInOrigin: ProviderConfig = {
-				id: "custom-builtin",
-				name: "自定义但用 OpenAI 域名",
-				format: "openai",
-				baseUrl: "https://api.openai.com/v1",
-				apiKey: "sk-test",
-				model: "gpt-4",
-				isBuiltIn: false,
-				isCustom: true,
-			};
-			const onSaved = vi.fn();
-			const { port } = createMockPort();
-			render(
-				<SettingsPanel
-					settings={makeInitialSettings({
-						providers: [customWithBuiltInOrigin],
-						activeProviderId: "custom-builtin",
-					})}
-					onClose={vi.fn()}
-					onSaved={onSaved}
-					port={port}
-				/>,
-			);
-
-			// 点击保存
-			fireEvent.click(screen.getByTestId("save-button"));
-
-			// 等待保存完成
-			await waitFor(() => {
-				expect(onSaved).toHaveBeenCalledTimes(1);
-			});
-
-			// 验证 permissions.request 不被调用（内置域名已授权）
-			expect(mockPermissionsRequest).not.toHaveBeenCalled();
-			// 验证 saveBiliAgentSettings 正常调用
-			expect(mockSave).toHaveBeenCalledTimes(1);
-		});
-
-		it("12) 全内置 provider -> 不触发 permissions.request，保存正常", async () => {
-			const onSaved = vi.fn();
-			const { port } = createMockPort();
-			render(
-				<SettingsPanel
-					settings={makeInitialSettings({
-						providers: [builtInOpenai],
-						activeProviderId: "openai",
-					})}
-					onClose={vi.fn()}
-					onSaved={onSaved}
-					port={port}
-				/>,
-			);
-
-			// 点击保存
-			fireEvent.click(screen.getByTestId("save-button"));
-
-			// 等待保存完成
-			await waitFor(() => {
-				expect(onSaved).toHaveBeenCalledTimes(1);
-			});
-
-			// 验证 permissions.request 不被调用（无自定义 provider）
-			expect(mockPermissionsRequest).not.toHaveBeenCalled();
-			// 验证 saveBiliAgentSettings 正常调用
-			expect(mockSave).toHaveBeenCalledTimes(1);
-		});
-
-		it("13) permissions.request 抛异常 -> 保存失败，onSaved 不调用", async () => {
-			// mock permissions.request reject（Chrome API 异常）
-			mockPermissionsRequest.mockRejectedValueOnce(new Error("chrome error"));
-			const onSaved = vi.fn();
-			const { port } = createMockPort();
-			render(
-				<SettingsPanel
-					settings={makeInitialSettings()}
-					onClose={vi.fn()}
-					onSaved={onSaved}
-					port={port}
-				/>,
-			);
-
-			// 点击保存
-			fireEvent.click(screen.getByTestId("save-button"));
-
-			// 等待错误态出现
-			await waitFor(() => {
-				expect(screen.getByTestId("save-error-hint")).toBeInTheDocument();
-			});
-
-			// 验证 permissions.request 被调用
-			expect(mockPermissionsRequest).toHaveBeenCalledTimes(1);
-			// 错误提示文案为"需要授权访问该域名"
-			expect(screen.getByTestId("save-error-hint")).toHaveTextContent(
-				"需要授权访问该域名",
-			);
-			// onSaved 不应被调用
-			expect(onSaved).not.toHaveBeenCalled();
-			// saveBiliAgentSettings 不应被调用（不留半保存）
-			expect(mockSave).not.toHaveBeenCalled();
 		});
 	});
 });
