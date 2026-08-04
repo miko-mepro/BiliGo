@@ -129,7 +129,6 @@ function classifyToolError(
   const errorText = getToolErrorMessage(error)
   const isNetworkError = errorName === 'BilibiliNetworkError'
     || hasSerializedToolErrorName(error, 'BilibiliNetworkError')
-    || /Bilibili\s+search\s+request\s+failed\s*:/i.test(errorText)
 
   if (isNetworkError) {
     const code = inferErrorCode(error)
