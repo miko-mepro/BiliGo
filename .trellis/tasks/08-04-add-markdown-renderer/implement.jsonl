@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/08-04-add-markdown-renderer/prd.md", "reason": "任务 PRD，包含需求、约束和接受标准"}
+{"file": ".trellis/tasks/08-04-add-markdown-renderer/design.md", "reason": "技术设计方案，包含组件改动、样式、安全边界"}
+{"file": ".trellis/tasks/research/markdown-renderer-frontend.md", "reason": "技术选型研究，包含 react-markdown 评估和 framework 信息"}
