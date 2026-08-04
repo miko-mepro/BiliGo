@@ -72,6 +72,12 @@ describe('sortVideos', () => {
     expect(sorted.map((v) => v.bvid)).toEqual(['C', 'B', 'A']);
   });
 
+  it('keeps backend rerank order without mutating the source array', () => {
+    const sorted = sortVideos(videos, 'rerank');
+    expect(sorted.map((v) => v.bvid)).toEqual(['A', 'B', 'C']);
+    expect(sorted).not.toBe(videos);
+  });
+
   it('does not mutate original array', () => {
     const original = [...videos];
     sortVideos(videos, 'play');
@@ -174,6 +180,94 @@ describe('applySortAndFilter', () => {
   it('returns empty array when nothing matches', () => {
     const result = applySortAndFilter(videos, 'play', 'week', 'long');
     expect(result).toEqual([]);
+  });
+
+  it('filters rerank results while preserving their original order', () => {
+    const result = applySortAndFilter(videos, 'rerank', 'month', 'all');
+    expect(result.map((v) => v.bvid)).toEqual(['A', 'B']);
+  });
+
+  // ===== 缺口5：rerank 数组经过 MessageList 后的最终 DOM 顺序 =====
+
+  // 场景A：rerank 数组经过 applySortAndFilter 后顺序与输入一致（全量，无筛选）
+  it('rerank 数组经过 applySortAndFilter 后顺序与输入一致（无筛选）', () => {
+    // 构造 rerank 输入：[BV2, BV1, BV3]（重排后顺序，非播放量降序）
+    const rerankVideos: BilibiliVideoCard[] = [
+      makeVideo({ bvid: 'BV2', play: 100 }),
+      makeVideo({ bvid: 'BV1', play: 900 }),
+      makeVideo({ bvid: 'BV3', play: 500 }),
+    ];
+
+    const result = applySortAndFilter(rerankVideos, 'rerank', 'all', 'all');
+
+    // 顺序保持与输入一致，不被播放量排序覆盖
+    expect(result.map((v) => v.bvid)).toEqual(['BV2', 'BV1', 'BV3']);
+  });
+
+  // 场景B：rerank 数组经过时长筛选后顺序保持（单一结果验证筛选有效）
+  it('rerank 数组经过时长筛选后只保留符合条件的视频', () => {
+    // 构造：BV2(3min), BV1(10min), BV3(25min)，rerank 顺序 [BV2, BV1, BV3]
+    // medium 筛选保留 5-20 分钟（300-1200 秒），BV2 的 3:00=180s < 300 被排除
+    const rerankVideos: BilibiliVideoCard[] = [
+      makeVideo({ bvid: 'BV2', duration: '3:00' }),
+      makeVideo({ bvid: 'BV1', duration: '10:00' }),
+      makeVideo({ bvid: 'BV3', duration: '25:00' }),
+    ];
+
+    // medium 筛选只保留 BV1（10:00 = 600s，在 300-1200 范围内）
+    const result = applySortAndFilter(rerankVideos, 'rerank', 'all', 'medium');
+
+    expect(result.map((v) => v.bvid)).toEqual(['BV1']);
+  });
+
+  // 场景C：rerank 数组经过日期筛选后多个结果顺序保持
+  it('rerank 数组经过日期筛选后多个结果保持 rerank 相对顺序', () => {
+    // 构造：BV2(3天前), BV1(15天前), BV3(60天前)，rerank 顺序 [BV2, BV1, BV3]
+    const rerankVideos: BilibiliVideoCard[] = [
+      makeVideo({ bvid: 'BV2', pubdate: now - 3 * 86400 }),
+      makeVideo({ bvid: 'BV1', pubdate: now - 15 * 86400 }),
+      makeVideo({ bvid: 'BV3', pubdate: now - 60 * 86400 }),
+    ];
+
+    // month 筛选保留 30 天内（BV3 的 60 天被筛掉，剩余 BV2, BV1 保持 rerank 顺序）
+    const result = applySortAndFilter(rerankVideos, 'rerank', 'month', 'all');
+
+    expect(result.map((v) => v.bvid)).toEqual(['BV2', 'BV1']);
+  });
+
+  // 场景D：rerank 与播放量排序冲突时，rerank 模式不被播放量覆盖
+  it('rerank 与播放量排序冲突时，rerank 模式保留后端顺序', () => {
+    // 构造：BV2(play=100), BV1(play=900), BV3(play=500)，rerank 顺序 [BV2, BV1, BV3]
+    // 播放量降序应为 [BV1, BV3, BV2]，与 rerank 顺序冲突
+    const rerankVideos: BilibiliVideoCard[] = [
+      makeVideo({ bvid: 'BV2', play: 100 }),
+      makeVideo({ bvid: 'BV1', play: 900 }),
+      makeVideo({ bvid: 'BV3', play: 500 }),
+    ];
+
+    const result = applySortAndFilter(rerankVideos, 'rerank', 'all', 'all');
+
+    // rerank 模式保留后端顺序，不被播放量降序覆盖
+    expect(result.map((v) => v.bvid)).toEqual(['BV2', 'BV1', 'BV3']);
+  });
+
+  // 场景E：rerank 数组多元素混合筛选后顺序保持
+  it('rerank 数组多元素混合筛选后保持 rerank 相对顺序', () => {
+    // 构造 5 个视频，rerank 顺序 [BV5, BV3, BV1, BV4, BV2]
+    // 各有不同 pubdate 和 duration，用于混合筛选验证
+    const rerankVideos: BilibiliVideoCard[] = [
+      makeVideo({ bvid: 'BV5', pubdate: now - 3 * 86400, duration: '3:00' }),  // 周 + 短
+      makeVideo({ bvid: 'BV3', pubdate: now - 10 * 86400, duration: '10:00' }), // 周 + 中
+      makeVideo({ bvid: 'BV1', pubdate: now - 20 * 86400, duration: '15:00' }), // 月 + 中
+      makeVideo({ bvid: 'BV4', pubdate: now - 40 * 86400, duration: '10:00' }), // 年 + 中
+      makeVideo({ bvid: 'BV2', pubdate: now - 50 * 86400, duration: '25:00' }), // 年 + 长
+    ];
+
+    // month + medium 筛选：保留 30 天内且 5-20 分钟
+    // BV3(10天,10:00) 和 BV1(20天,15:00) 符合，保持 rerank 相对顺序
+    const result = applySortAndFilter(rerankVideos, 'rerank', 'month', 'medium');
+
+    expect(result.map((v) => v.bvid)).toEqual(['BV3', 'BV1']);
   });
 
   it('does not mutate original array', () => {
